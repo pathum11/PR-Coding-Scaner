@@ -375,8 +375,8 @@ export default function App() {
             <CardContent className="pt-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">Current Price</p>
-                  <h3 className="text-2xl font-bold font-mono">
+                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">Current Price</p>
+                  <h3 className="text-2xl font-bold font-mono text-white">
                     ${latest?.close.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </h3>
                 </div>
@@ -394,10 +394,10 @@ export default function App() {
             <CardContent className="pt-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">Last Band Touch</p>
+                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">Last Band Touch</p>
                   <h3 className={cn(
                     "text-2xl font-bold font-mono",
-                    (latest as any)?.lastTouch === 'UPPER' ? "text-rose-400" : (latest as any)?.lastTouch === 'LOWER' ? "text-emerald-400" : "text-zinc-500"
+                    (latest as any)?.lastTouch === 'UPPER' ? "text-rose-400" : (latest as any)?.lastTouch === 'LOWER' ? "text-emerald-400" : "text-zinc-100"
                   )}>
                     {(latest as any)?.lastTouch || 'NONE'}
                   </h3>
@@ -411,7 +411,7 @@ export default function App() {
             <CardContent className="pt-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">Market Strength</p>
+                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">Market Strength</p>
                   <h3 className={cn(
                     "text-2xl font-bold font-mono",
                     latest?.isStrong ? "text-emerald-400" : "text-orange-400"
@@ -428,8 +428,8 @@ export default function App() {
             <CardContent className="pt-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">ADX Value</p>
-                  <h3 className="text-2xl font-bold font-mono">
+                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">ADX Value</p>
+                  <h3 className="text-2xl font-bold font-mono text-white">
                     {latest?.adx?.toFixed(2) || '---'}
                   </h3>
                 </div>
@@ -447,7 +447,7 @@ export default function App() {
             <CardContent className="pt-6">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-1">RSI (14)</p>
+                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">RSI (14)</p>
                   <h3 className={cn(
                     "text-2xl font-bold font-mono",
                     (latest?.rsi || 50) > 70 ? "text-rose-400" : (latest?.rsi || 50) < 30 ? "text-emerald-400" : "text-zinc-100"
@@ -695,7 +695,7 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-300 uppercase font-medium">Sensitivity</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">Sensitivity</label>
                   <Input 
                     type="number" 
                     value={sensitivity} 
@@ -704,7 +704,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-300 uppercase font-medium">Multiplier</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">Multiplier</label>
                   <Input 
                     type="number" 
                     step="0.1"
@@ -716,7 +716,7 @@ export default function App() {
                 
                 <div className="pt-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-300">Trend Filter</span>
+                    <span className="text-sm text-zinc-100">Trend Filter</span>
                     <button 
                       onClick={() => setUseFilter(!useFilter)}
                       className={cn(
@@ -731,7 +731,7 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-300">Smart Trail</span>
+                    <span className="text-sm text-zinc-100">Smart Trail</span>
                     <button 
                       onClick={() => setShowTrail(!showTrail)}
                       className={cn(
@@ -746,7 +746,7 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-300">Reversal Zones</span>
+                    <span className="text-sm text-zinc-100">Reversal Zones</span>
                     <button 
                       onClick={() => setShowZones(!showZones)}
                       className={cn(
@@ -772,7 +772,7 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-300 uppercase font-medium">RSI Length</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">RSI Length</label>
                   <Input 
                     type="number" 
                     value={rsiHistLength} 
@@ -781,7 +781,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-300 uppercase font-medium">MA Length</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">MA Length</label>
                   <Input 
                     type="number" 
                     value={rsiHistMALength} 
@@ -790,7 +790,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-300 uppercase font-medium">MA Type</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">MA Type</label>
                   <select 
                     value={rsiHistMAType} 
                     onChange={(e) => setRsiHistMAType(e.target.value)}
@@ -812,7 +812,7 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-300">Auto-Alert (30m)</span>
+                  <span className="text-sm text-zinc-100">Auto-Alert (30m)</span>
                   <button 
                     onClick={() => setAutoAlert(!autoAlert)}
                     className={cn(
@@ -827,7 +827,7 @@ export default function App() {
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-300">Alert Sound</span>
+                  <span className="text-sm text-zinc-100">Alert Sound</span>
                   <button 
                     onClick={() => setSoundEnabled(!soundEnabled)}
                     className={cn(
