@@ -40,7 +40,8 @@ import {
   Bell,
   BellRing,
   Volume2,
-  VolumeX
+  VolumeX,
+  History
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -86,6 +87,10 @@ export default function App() {
   const [autoAlert, setAutoAlert] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [autoScan, setAutoScan] = useState(false);
+  const [scanLookbackHours, setScanLookbackHours] = useState(12);
+  const [lastScanTime, setLastScanTime] = useState<number | null>(null);
+  const [signalHistory, setSignalHistory] = useState<any[]>([]);
 
   // Check for alerts every 10 seconds
   useEffect(() => {
@@ -118,6 +123,26 @@ export default function App() {
     }, 10000);
     return () => clearInterval(interval);
   }, [soundEnabled]);
+
+  // Auto-scan logic
+  useEffect(() => {
+    if (!autoScan) return;
+
+    const interval = setInterval(() => {
+      if (!scanning) {
+        startScan();
+        setLastScanTime(Date.now());
+      }
+    }, 300000); // Every 5 minutes
+
+    // Initial scan if enabled
+    if (!scanning && (!lastScanTime || Date.now() - lastScanTime > 300000)) {
+      startScan();
+      setLastScanTime(Date.now());
+    }
+
+    return () => clearInterval(interval);
+  }, [autoScan, scanning, lastScanTime]);
 
   const addAlert = (symbol: string, type: string, signalTime: number) => {
     const alertTime = signalTime + (30 * 60 * 1000); // 30 minutes later
@@ -189,25 +214,51 @@ export default function App() {
               rsiHistMAType
             });
 
-            const last = processed[processed.length - 1];
+            const now = Date.now();
+            const lookbackMs = scanLookbackHours * 60 * 60 * 1000;
+            const lookbackLimit = now - lookbackMs;
             
-            const isBuy = last.buySignal && (last.rsiHist || 0) > 0 && last.lastTouch === 'LOWER';
-            const isSell = last.sellSignal && (last.rsiHist || 0) < 0 && last.lastTouch === 'UPPER';
+            // Find the most recent signal within the lookback window
+            let foundSignal = null;
+            for (let j = processed.length - 1; j >= 0; j--) {
+              const candle = processed[j];
+              if (candle.time < lookbackLimit) break;
+              
+              const isBuy = candle.buySignal && (candle.rsiHist || 0) > 0 && candle.lastTouch === 'LOWER';
+              const isSell = candle.sellSignal && (candle.rsiHist || 0) < 0 && candle.lastTouch === 'UPPER';
+              
+              if (isBuy || isSell) {
+                foundSignal = {
+                  candle,
+                  type: isBuy ? 'BUY' : 'SELL' as 'BUY' | 'SELL'
+                };
+                break;
+              }
+            }
 
-            if (isBuy || isSell) {
+            if (foundSignal) {
+              const { candle, type } = foundSignal;
               const signalData = {
+                id: `${s}-${candle.time}`,
                 symbol: s,
-                type: isBuy ? 'BUY' : 'SELL',
-                price: last.close,
-                time: last.time,
-                isStrong: last.isStrong,
-                lastTouch: last.lastTouch,
-                lastTouchTime: last.lastTouchTime
+                type: type,
+                price: candle.close,
+                time: candle.time,
+                isStrong: candle.isStrong,
+                lastTouch: candle.lastTouch,
+                lastTouchTime: candle.lastTouchTime,
+                scanTime: Date.now()
               };
               results.push(signalData);
               
+              // Add to history
+              setSignalHistory(prev => {
+                if (prev.find(h => h.id === signalData.id)) return prev;
+                return [signalData, ...prev].slice(0, 100);
+              });
+
               if (autoAlert) {
-                addAlert(s, signalData.type, last.time);
+                addAlert(s, signalData.type, candle.time);
               }
             }
           } catch (e) {
@@ -278,57 +329,32 @@ export default function App() {
   const latest = processedData[processedData.length - 1];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
+    <div className="min-h-screen bg-[#0c0601] text-zinc-100 font-sans selection:bg-orange-500/30 relative overflow-x-hidden">
+      {/* Background Decorative Elements */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-orange-500/10 rounded-full blur-[120px]" />
+        <div className="absolute top-[20%] -right-[10%] w-[30%] h-[30%] bg-amber-500/5 rounded-full blur-[120px]" />
+        <div className="absolute -bottom-[10%] left-[20%] w-[40%] h-[40%] bg-orange-600/5 rounded-full blur-[120px]" />
+      </div>
+
       {/* Header */}
-      <header className="border-b border-zinc-800 bg-black/50 backdrop-blur-md sticky top-0 z-50">
+      <header className="border-b border-white/5 bg-black/40 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.4)]">
+            <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(249,115,22,0.4)]">
               <Zap className="w-5 h-5 text-black fill-current" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
-              CryptoPulse <span className="text-emerald-500 font-mono text-sm ml-1">v1.0</span>
+            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-orange-400 bg-clip-text text-transparent">
+              CryptoPulse <span className="text-orange-500 font-mono text-sm ml-1">v1.0</span>
             </h1>
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
-              {['15m', '1h', '4h', '1d'].map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => setTimeframe(tf)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                    timeframe === tf 
-                      ? "bg-zinc-800 text-white shadow-sm" 
-                      : "text-zinc-500 hover:text-zinc-300"
-                  )}
-                >
-                  {tf}
-                </button>
-              ))}
-            </div>
-            <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
-              {SYMBOLS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setSymbol(s)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                    symbol === s 
-                      ? "bg-zinc-800 text-white shadow-sm" 
-                      : "text-zinc-500 hover:text-zinc-300"
-                  )}
-                >
-                  {s.replace('USDT', '')}
-                </button>
-              ))}
-            </div>
             <Button 
               variant="outline" 
               size="icon" 
               onClick={() => fetchData(symbol, timeframe)}
-              className="border-zinc-800 hover:bg-zinc-800"
+              className="border-orange-500/20 hover:bg-orange-500/10"
             >
               <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
             </Button>
@@ -339,12 +365,15 @@ export default function App() {
       <main className="max-w-7xl mx-auto p-4 lg:p-6 space-y-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <div className="flex items-center justify-between mb-4">
-            <TabsList className="bg-zinc-900 border border-zinc-800">
-              <TabsTrigger value="chart" className="flex items-center gap-2">
+            <TabsList className="bg-orange-900/40 border border-orange-500/30">
+              <TabsTrigger value="chart" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
                 <LayoutDashboard className="w-4 h-4" /> Chart
               </TabsTrigger>
-              <TabsTrigger value="scanner" className="flex items-center gap-2">
+              <TabsTrigger value="scanner" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
                 <Search className="w-4 h-4" /> Market Scanner
+              </TabsTrigger>
+              <TabsTrigger value="history" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
+                <History className="w-4 h-4" /> Signal History
               </TabsTrigger>
             </TabsList>
             
@@ -352,7 +381,7 @@ export default function App() {
               <Button 
                 onClick={startScan} 
                 disabled={scanning}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white gap-2"
+                className="bg-orange-600 hover:bg-orange-500 text-white gap-2 shadow-[0_0_15px_rgba(234,88,12,0.3)]"
               >
                 {scanning ? (
                   <>
@@ -369,112 +398,17 @@ export default function App() {
           </div>
 
           <TabsContent value="chart" className="space-y-6 mt-0">
-            {/* Top Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
-            <CardContent className="pt-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">Current Price</p>
-                  <h3 className="text-2xl font-bold font-mono text-white">
-                    ${latest?.close.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </h3>
-                </div>
-                <Badge className={cn(
-                  "bg-opacity-20 border-none",
-                  latest?.trend === 'BULLISH' ? "bg-emerald-500 text-emerald-400" : "bg-rose-500 text-rose-400"
-                )}>
-                  {latest?.trend}
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
-            <CardContent className="pt-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">Last Band Touch</p>
-                  <h3 className={cn(
-                    "text-2xl font-bold font-mono",
-                    (latest as any)?.lastTouch === 'UPPER' ? "text-rose-400" : (latest as any)?.lastTouch === 'LOWER' ? "text-emerald-400" : "text-zinc-100"
-                  )}>
-                    {(latest as any)?.lastTouch || 'NONE'}
-                  </h3>
-                </div>
-                <Target className={cn("w-5 h-5", (latest as any)?.lastTouch === 'UPPER' ? "text-rose-500" : (latest as any)?.lastTouch === 'LOWER' ? "text-emerald-500" : "text-zinc-500")} />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
-            <CardContent className="pt-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">Market Strength</p>
-                  <h3 className={cn(
-                    "text-2xl font-bold font-mono",
-                    latest?.isStrong ? "text-emerald-400" : "text-orange-400"
-                  )}>
-                    {latest?.isStrong ? 'STRONG' : 'NORMAL'}
-                  </h3>
-                </div>
-                <Activity className={cn("w-5 h-5", latest?.isStrong ? "text-emerald-500" : "text-orange-500")} />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
-            <CardContent className="pt-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">ADX Value</p>
-                  <h3 className="text-2xl font-bold font-mono text-white">
-                    {latest?.adx?.toFixed(2) || '---'}
-                  </h3>
-                </div>
-                <div className="w-10 h-1 bg-zinc-800 rounded-full overflow-hidden mt-3">
-                  <div 
-                    className="h-full bg-emerald-500 transition-all duration-500" 
-                    style={{ width: `${Math.min((latest?.adx || 0) * 2, 100)}%` }}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm">
-            <CardContent className="pt-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-medium text-zinc-100 uppercase tracking-wider mb-1">RSI (14)</p>
-                  <h3 className={cn(
-                    "text-2xl font-bold font-mono",
-                    (latest?.rsi || 50) > 70 ? "text-rose-400" : (latest?.rsi || 50) < 30 ? "text-emerald-400" : "text-zinc-100"
-                  )}>
-                    {latest?.rsi?.toFixed(2) || '---'}
-                  </h3>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <div className={cn("w-2 h-2 rounded-full", (latest?.rsi || 50) > 70 ? "bg-rose-500 animate-pulse" : "bg-zinc-800")} title="Overbought" />
-                  <div className={cn("w-2 h-2 rounded-full", (latest?.rsi || 50) < 30 ? "bg-emerald-500 animate-pulse" : "bg-zinc-800")} title="Oversold" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Chart Section */}
-          <Card className="lg:col-span-3 bg-zinc-900/50 border-zinc-800 overflow-hidden flex flex-col min-h-[500px]">
-            <CardHeader className="border-b border-zinc-800/50 flex flex-row items-center justify-between py-4">
+          <Card className="lg:col-span-3 bg-orange-950/20 border-orange-500/20 overflow-hidden flex flex-col min-h-[500px] backdrop-blur-sm shadow-2xl">
+            <CardHeader className="border-b border-orange-500/10 flex flex-row items-center justify-between py-4 bg-orange-500/[0.02]">
               <div>
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  {symbol} <span className="text-zinc-500 font-normal text-sm">{timeframe} Chart</span>
+                <CardTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                  {symbol} <span className="text-zinc-400 font-normal text-sm">{timeframe} Chart</span>
                 </CardTitle>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="outline" className="border-emerald-500/50 text-emerald-400 bg-emerald-500/5">
+                <Badge variant="outline" className="border-orange-500/50 text-orange-400 bg-orange-500/5">
                   Live Data
                 </Badge>
               </div>
@@ -482,7 +416,7 @@ export default function App() {
             <CardContent className="p-0 flex-1 relative">
               {loading ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm z-10">
-                  <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
+                  <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                 </div>
               ) : error ? (
                 <div className="absolute inset-0 flex items-center justify-center text-rose-400 p-4 text-center">
@@ -649,10 +583,10 @@ export default function App() {
           </Card>
 
           {/* RSI Histogram Chart */}
-          <Card className="lg:col-span-3 bg-zinc-900/50 border-zinc-800 overflow-hidden flex flex-col h-[250px]">
-            <CardHeader className="border-b border-zinc-800/50 py-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                RSI Histogram <span className="text-zinc-500 font-normal text-xs">({rsiHistMAType})</span>
+          <Card className="lg:col-span-3 bg-orange-950/20 border-orange-500/20 overflow-hidden flex flex-col h-[250px] backdrop-blur-sm shadow-2xl">
+            <CardHeader className="border-b border-orange-500/10 py-3 bg-orange-500/[0.02]">
+              <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                RSI Histogram <span className="text-zinc-400 font-normal text-xs">({rsiHistMAType})</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0 flex-1 relative">
@@ -687,10 +621,10 @@ export default function App() {
 
           {/* Settings Sidebar */}
           <div className="space-y-6">
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-zinc-100">
-                  <Settings className="w-4 h-4" /> Indicator Settings
+            <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl">
+              <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                  <Settings className="w-4 h-4 text-orange-500" /> Indicator Settings
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -700,7 +634,7 @@ export default function App() {
                     type="number" 
                     value={sensitivity} 
                     onChange={(e) => setSensitivity(parseInt(e.target.value))}
-                    className="bg-zinc-950 border-zinc-800 h-8 text-sm text-zinc-100"
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
                   />
                 </div>
                 <div className="space-y-2">
@@ -710,7 +644,7 @@ export default function App() {
                     step="0.1"
                     value={multiplier} 
                     onChange={(e) => setMultiplier(parseFloat(e.target.value))}
-                    className="bg-zinc-950 border-zinc-800 h-8 text-sm text-zinc-100"
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
                   />
                 </div>
                 
@@ -721,7 +655,7 @@ export default function App() {
                       onClick={() => setUseFilter(!useFilter)}
                       className={cn(
                         "w-8 h-4 rounded-full transition-colors relative",
-                        useFilter ? "bg-emerald-500" : "bg-zinc-700"
+                        useFilter ? "bg-orange-500" : "bg-orange-900/50"
                       )}
                     >
                       <div className={cn(
@@ -736,7 +670,7 @@ export default function App() {
                       onClick={() => setShowTrail(!showTrail)}
                       className={cn(
                         "w-8 h-4 rounded-full transition-colors relative",
-                        showTrail ? "bg-emerald-500" : "bg-zinc-700"
+                        showTrail ? "bg-orange-500" : "bg-orange-900/50"
                       )}
                     >
                       <div className={cn(
@@ -751,7 +685,7 @@ export default function App() {
                       onClick={() => setShowZones(!showZones)}
                       className={cn(
                         "w-8 h-4 rounded-full transition-colors relative",
-                        showZones ? "bg-emerald-500" : "bg-zinc-700"
+                        showZones ? "bg-orange-500" : "bg-orange-900/50"
                       )}
                     >
                       <div className={cn(
@@ -764,10 +698,10 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-zinc-100">
-                  <Settings className="w-4 h-4" /> RSI Histogram Settings
+            <Card className="bg-orange-950/20 border-orange-500/20">
+              <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                  <Settings className="w-4 h-4 text-orange-500" /> RSI Histogram Settings
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -777,7 +711,7 @@ export default function App() {
                     type="number" 
                     value={rsiHistLength} 
                     onChange={(e) => setRsiHistLength(parseInt(e.target.value))}
-                    className="bg-zinc-950 border-zinc-800 h-8 text-sm text-zinc-100"
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
                   />
                 </div>
                 <div className="space-y-2">
@@ -786,7 +720,7 @@ export default function App() {
                     type="number" 
                     value={rsiHistMALength} 
                     onChange={(e) => setRsiHistMALength(parseInt(e.target.value))}
-                    className="bg-zinc-950 border-zinc-800 h-8 text-sm text-zinc-100"
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
                   />
                 </div>
                 <div className="space-y-2">
@@ -794,7 +728,7 @@ export default function App() {
                   <select 
                     value={rsiHistMAType} 
                     onChange={(e) => setRsiHistMAType(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-md h-8 text-sm px-2 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-zinc-100"
+                    className="w-full bg-orange-950/40 border border-orange-500/20 rounded-md h-8 text-sm px-2 focus:outline-none focus:ring-1 focus:ring-orange-500 text-zinc-100"
                   >
                     {["NONE", "SMA", "EMA", "WMA", "HMA", "JMA", "KAMA"].map(type => (
                       <option key={type} value={type}>{type}</option>
@@ -804,10 +738,10 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-zinc-100">
-                  <Bell className="w-4 h-4" /> Alert Settings
+            <Card className="bg-orange-950/20 border-orange-500/20">
+              <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                  <Bell className="w-4 h-4 text-orange-500" /> Alert Settings
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -817,7 +751,7 @@ export default function App() {
                     onClick={() => setAutoAlert(!autoAlert)}
                     className={cn(
                       "w-8 h-4 rounded-full transition-colors relative",
-                      autoAlert ? "bg-emerald-500" : "bg-zinc-700"
+                      autoAlert ? "bg-orange-500" : "bg-orange-900/50"
                     )}
                   >
                     <div className={cn(
@@ -832,7 +766,7 @@ export default function App() {
                     onClick={() => setSoundEnabled(!soundEnabled)}
                     className={cn(
                       "w-8 h-4 rounded-full transition-colors relative",
-                      soundEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                      soundEnabled ? "bg-orange-500" : "bg-orange-900/50"
                     )}
                   >
                     <div className={cn(
@@ -841,16 +775,52 @@ export default function App() {
                     )} />
                   </button>
                 </div>
+                <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                  <span className="text-sm text-zinc-100 font-medium">Auto-Scan (5m)</span>
+                  <button 
+                    onClick={() => setAutoScan(!autoScan)}
+                    className={cn(
+                      "w-8 h-4 rounded-full transition-colors relative",
+                      autoScan ? "bg-orange-500" : "bg-orange-900/50"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform",
+                      autoScan ? "translate-x-4.5" : "translate-x-0.5"
+                    )} />
+                  </button>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs text-zinc-100 uppercase font-medium">Scan Lookback (Hours)</label>
+                    <span className="text-xs font-bold text-orange-500">{scanLookbackHours}h</span>
+                  </div>
+                  <Input 
+                    type="number" 
+                    min="1"
+                    max="168"
+                    value={scanLookbackHours} 
+                    onChange={(e) => setScanLookbackHours(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
+                  />
+                  <p className="text-[10px] text-zinc-500 italic">Filter signals confirmed within the last {scanLookbackHours} hours.</p>
+                </div>
+                {lastScanTime && (
+                  <p className="text-[10px] text-zinc-500 text-right">
+                    Last scan: {new Date(lastScanTime).toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo', hour12: false })}
+                  </p>
+                )}
                 
                 {alerts.length > 0 && (
                   <div className="pt-2 border-t border-zinc-800">
                     <p className="text-[10px] text-zinc-500 uppercase font-bold mb-2">Active Alerts ({alerts.filter(a => !a.triggered).length})</p>
                     <div className="max-h-32 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                       {alerts.slice().reverse().map((alert) => (
-                        <div key={alert.id} className="flex justify-between items-center bg-zinc-950 p-2 rounded border border-zinc-800">
+                        <div key={alert.id} className="flex justify-between items-center bg-white/[0.03] p-2 rounded border border-white/5">
                           <div className="flex flex-col">
-                            <span className="text-xs font-bold text-zinc-100">{alert.symbol}</span>
-                            <span className="text-[10px] text-zinc-500">
+                            <span className="text-xs font-bold text-white">{alert.symbol}</span>
+                            <span className="text-[10px] text-zinc-400">
                               {alert.triggered ? 'Triggered' : `Due: ${new Date(alert.alertTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Colombo' })}`}
                             </span>
                           </div>
@@ -870,26 +840,26 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card className="bg-zinc-900/50 border-zinc-800">
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-zinc-100">
-                  <Info className="w-4 h-4" /> Signal Legend
+            <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl">
+              <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                  <Info className="w-4 h-4 text-orange-500" /> Signal Legend
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 pt-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-6 h-6 bg-emerald-500 rounded flex items-center justify-center text-[10px] font-bold">B</div>
+                  <div className="w-6 h-6 bg-emerald-500 rounded flex items-center justify-center text-[10px] font-bold text-black">B</div>
                   <span className="text-xs text-zinc-300">Confirmation Buy</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="w-6 h-6 bg-rose-500 rounded flex items-center justify-center text-[10px] font-bold">S</div>
+                  <div className="w-6 h-6 bg-rose-500 rounded flex items-center justify-center text-[10px] font-bold text-black">S</div>
                   <span className="text-xs text-zinc-300">Confirmation Sell</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 bg-purple-500 rounded-full ml-1.5" />
+                  <div className="w-3 h-3 bg-purple-500 rounded-full ml-1.5 shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
                   <span className="text-xs text-zinc-300">Contrarian Signal</span>
                 </div>
-                <div className="mt-4 p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+                <div className="mt-4 p-3 bg-white/[0.03] rounded-lg border border-white/5">
                   <p className="text-[10px] text-zinc-400 leading-relaxed">
                     Signals are generated based on Supertrend crossovers and RSI/Bollinger Band reversals.
                   </p>
@@ -901,17 +871,17 @@ export default function App() {
       </TabsContent>
 
         <TabsContent value="scanner" className="mt-0">
-          <Card className="bg-zinc-900/50 border-zinc-800 min-h-[600px]">
-            <CardHeader className="border-b border-zinc-800/50 flex flex-row items-center justify-between">
+          <Card className="bg-orange-950/20 border-orange-500/20 min-h-[600px] backdrop-blur-sm shadow-2xl overflow-hidden">
+            <CardHeader className="border-b border-orange-500/10 flex flex-row items-center justify-between bg-orange-500/[0.02]">
               <div>
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <ListFilter className="w-5 h-5 text-emerald-500" /> Filtered Signals
+                <CardTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                  <ListFilter className="w-5 h-5 text-orange-500" /> Filtered Signals
                 </CardTitle>
-                <CardDescription className="text-zinc-300">
+                <CardDescription className="text-zinc-400">
                   Binance Futures (USDT Pairs) • Rules: Lux Signal + RSI Hist + Last Band Touch
                 </CardDescription>
               </div>
-              <Badge variant="outline" className="bg-zinc-950 border-zinc-800">
+              <Badge variant="outline" className="bg-black/40 border-white/10 text-white">
                 {scanResults.length} Signals / {totalSymbols || '---'} Coins
               </Badge>
             </CardHeader>
@@ -943,7 +913,7 @@ export default function App() {
                       <tr>
                         <td colSpan={9} className="p-12 text-center">
                           <div className="flex flex-col items-center gap-4">
-                            <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
+                            <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                             <div className="space-y-1">
                               <p className="text-zinc-100 font-medium">Scanning {totalSymbols} Binance Futures... {scanProgress}%</p>
                               <p className="text-zinc-500 text-xs font-mono">Analyzing {currentScanning}.P</p>
@@ -959,7 +929,7 @@ export default function App() {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.95 }}
-                          className="hover:bg-zinc-800/30 transition-colors group"
+                          className="hover:bg-orange-500/5 transition-colors group"
                         >
                           <td className="p-4">
                             <div 
@@ -1006,7 +976,7 @@ export default function App() {
                           </td>
                           <td className="p-4">
                             {res.isStrong ? (
-                              <Badge variant="outline" className="border-emerald-500/50 text-emerald-400 text-[10px] h-5">STRONG</Badge>
+                              <Badge variant="outline" className="border-orange-500/50 text-orange-400 text-[10px] h-5">STRONG</Badge>
                             ) : (
                               <span className="text-zinc-600 text-xs">Normal</span>
                             )}
@@ -1023,7 +993,7 @@ export default function App() {
                               className={cn(
                                 "h-8 w-8",
                                 alerts.find(a => a.id === `${res.symbol}-${res.time}`) 
-                                  ? "text-emerald-500" 
+                                  ? "text-orange-500" 
                                   : "text-zinc-500 hover:text-zinc-300"
                               )}
                               onClick={() => addAlert(res.symbol, res.type, res.time)}
@@ -1035,7 +1005,7 @@ export default function App() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
+                              className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"
                               onClick={() => {
                                 setSymbol(res.symbol);
                                 setActiveTab('chart');
@@ -1053,6 +1023,90 @@ export default function App() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="history" className="mt-0">
+          <Card className="bg-orange-950/20 border-orange-500/20 min-h-[600px] backdrop-blur-sm shadow-2xl overflow-hidden">
+            <CardHeader className="border-b border-orange-500/10 flex flex-row items-center justify-between bg-orange-500/[0.02]">
+              <div>
+                <CardTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                  <History className="w-5 h-5 text-purple-500" /> Signal History
+                </CardTitle>
+                <CardDescription className="text-zinc-400">
+                  History of all signals detected during scans.
+                </CardDescription>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="border-white/10 text-zinc-400 hover:text-white hover:bg-white/5"
+                onClick={() => setSignalHistory([])}
+              >
+                Clear History
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-zinc-800 bg-black/20">
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Price</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal Time</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Detected At</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/50">
+                    {signalHistory.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-12 text-center text-zinc-500">
+                          No signal history yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      signalHistory.map((res) => (
+                        <tr key={res.id} className="hover:bg-orange-500/5 transition-colors group">
+                          <td className="p-4">
+                            <span className="font-bold text-zinc-100">{res.symbol}.P</span>
+                          </td>
+                          <td className="p-4">
+                            <Badge className={cn(
+                              "border-none",
+                              res.type === 'BUY' ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                            )}>
+                              {res.type}
+                            </Badge>
+                          </td>
+                          <td className="p-4 font-mono text-zinc-300">${res.price.toLocaleString()}</td>
+                          <td className="p-4 text-xs text-zinc-400 font-mono">
+                            {new Date(res.time).toLocaleString('en-US', { timeZone: 'Asia/Colombo', hour12: false })}
+                          </td>
+                          <td className="p-4 text-xs text-zinc-400 font-mono">
+                            {new Date(res.scanTime).toLocaleString('en-US', { timeZone: 'Asia/Colombo', hour12: false })}
+                          </td>
+                          <td className="p-4 text-right">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="h-8 text-xs text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"
+                              onClick={() => {
+                                setSymbol(res.symbol);
+                                setActiveTab('chart');
+                              }}
+                            >
+                              View Chart
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
     </main>
 
@@ -1063,9 +1117,9 @@ export default function App() {
             © 2026 CryptoPulse Analysis. Data provided by Binance API.
           </p>
           <div className="flex gap-6">
-            <a href="#" className="text-xs text-zinc-500 hover:text-emerald-500 transition-colors">Documentation</a>
-            <a href="#" className="text-xs text-zinc-500 hover:text-emerald-500 transition-colors">API Status</a>
-            <a href="#" className="text-xs text-zinc-500 hover:text-emerald-500 transition-colors">Risk Warning</a>
+            <a href="#" className="text-xs text-zinc-500 hover:text-orange-500 transition-colors">Documentation</a>
+            <a href="#" className="text-xs text-zinc-500 hover:text-orange-500 transition-colors">API Status</a>
+            <a href="#" className="text-xs text-zinc-500 hover:text-orange-500 transition-colors">Risk Warning</a>
           </div>
         </div>
       </footer>
@@ -1078,10 +1132,10 @@ export default function App() {
               initial={{ opacity: 0, x: 50, scale: 0.9 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: 20, scale: 0.95 }}
-              className="bg-zinc-900 border border-emerald-500/50 p-4 rounded-xl shadow-2xl w-80 pointer-events-auto flex gap-4 items-start"
+              className="bg-orange-950 border border-orange-500/50 p-4 rounded-xl shadow-2xl w-80 pointer-events-auto flex gap-4 items-start"
             >
-              <div className="bg-emerald-500/20 p-2 rounded-lg">
-                <BellRing className="w-5 h-5 text-emerald-500" />
+              <div className="bg-orange-500/20 p-2 rounded-lg">
+                <BellRing className="w-5 h-5 text-orange-500" />
               </div>
               <div className="flex-1">
                 <div className="flex justify-between items-start">
