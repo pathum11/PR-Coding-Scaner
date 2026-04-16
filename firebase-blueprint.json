@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "userSettings": {
+      "title": "User Settings",
+      "description": "Stores user preferences for Telegram alerts and scanner settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "telegramEnabled": { "type": "boolean" },
+        "telegramToken": { "type": "string" },
+        "telegramChatId": { "type": "string" },
+        "autoScan": { "type": "boolean" },
+        "sensitivity": { "type": "number" },
+        "multiplier": { "type": "number" },
+        "useFilter": { "type": "boolean" },
+        "scanLookbackHours": { "type": "number" }
+      },
+      "required": ["uid"]
+    },
+    "alerts": {
+      "title": "Alerts",
+      "description": "Stores triggered alerts to prevent duplicates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "type": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "uid"]
+    }
+  },
+  "firestore": {
+    "/settings/{uid}": {
+      "schema": "userSettings",
+      "description": "User specific settings"
+    },
+    "/alerts/{alertId}": {
+      "schema": "alerts",
+      "description": "Global or user-specific triggered alerts"
+    }
+  }
+}

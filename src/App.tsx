@@ -41,16 +41,38 @@ import {
   BellRing,
   Volume2,
   VolumeX,
-  History
+  History,
+  Send,
+  Globe
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { processIndicators, Candle } from '@/src/lib/indicators';
+import { processIndicators, Candle } from './lib/indicators';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { auth, db } from './lib/firebase';
+import { 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  onAuthStateChanged, 
+  signOut,
+  User
+} from 'firebase/auth';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  onSnapshot,
+  collection,
+  query,
+  where,
+  orderBy,
+  limit
+} from 'firebase/firestore';
+import { LogIn, LogOut, User as UserIcon } from 'lucide-react';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
 
@@ -63,8 +85,10 @@ export default function App() {
   
   // Indicator Settings
   const [sensitivity, setSensitivity] = useState(7);
-  const [multiplier, setMultiplier] = useState(1.5);
+  const [multiplier, setMultiplier] = useState(4.3);
   const [useFilter, setUseFilter] = useState(false);
+  const [confirmationSignals, setConfirmationSignals] = useState(true);
+  const [contrarianSignals, setContrarianSignals] = useState(true);
   const [showZones, setShowZones] = useState(true);
   const [showTrail, setShowTrail] = useState(true);
 
@@ -72,6 +96,8 @@ export default function App() {
   const [rsiHistLength, setRsiHistLength] = useState(16);
   const [rsiHistMALength, setRsiHistMALength] = useState(7);
   const [rsiHistMAType, setRsiHistMAType] = useState('KAMA');
+  const [rsiSource, setRsiSource] = useState<'CLOSE' | 'HL2'>('HL2');
+  const [kamaAlpha, setKamaAlpha] = useState(3);
 
   // Scanner State
   const [scanResults, setScanResults] = useState<any[]>([]);
@@ -84,13 +110,150 @@ export default function App() {
 
   // Alert System State
   const [alerts, setAlerts] = useState<any[]>([]);
-  const [autoAlert, setAutoAlert] = useState(false);
+  const [autoAlert, setAutoAlert] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [autoScan, setAutoScan] = useState(false);
-  const [scanLookbackHours, setScanLookbackHours] = useState(12);
+  const [notificationHistory, setNotificationHistory] = useState<any[]>([]);
+  const [autoScan, setAutoScan] = useState(true);
+  const [scanLookbackHours, setScanLookbackHours] = useState(10);
   const [lastScanTime, setLastScanTime] = useState<number | null>(null);
   const [signalHistory, setSignalHistory] = useState<any[]>([]);
+
+  // Auth State
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Telegram & Push Settings
+  const [telegramEnabled, setTelegramEnabled] = useState(() => localStorage.getItem('telegramEnabled') === 'true');
+  const [telegramToken, setTelegramToken] = useState(() => localStorage.getItem('telegramToken') || '');
+  const [telegramChatId, setTelegramChatId] = useState(() => localStorage.getItem('telegramChatId') || '');
+  const [pushEnabled, setPushEnabled] = useState(() => localStorage.getItem('pushEnabled') === 'true');
+
+  // Sync with Firebase
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+      if (currentUser) {
+        // Load settings from Firestore
+        const settingsRef = doc(db, 'settings', currentUser.uid);
+        getDoc(settingsRef).then((docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.telegramToken) setTelegramToken(data.telegramToken);
+            if (data.telegramChatId) setTelegramChatId(data.telegramChatId);
+            if (data.telegramEnabled !== undefined) setTelegramEnabled(data.telegramEnabled);
+            if (data.autoScan !== undefined) setAutoScan(data.autoScan);
+            if (data.sensitivity !== undefined) setSensitivity(data.sensitivity);
+            if (data.multiplier !== undefined) setMultiplier(data.multiplier);
+            if (data.useFilter !== undefined) setUseFilter(data.useFilter);
+            if (data.scanLookbackHours !== undefined) setScanLookbackHours(data.scanLookbackHours);
+          }
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const saveSettingsToFirebase = async () => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'settings', user.uid), {
+        uid: user.uid,
+        telegramEnabled,
+        telegramToken,
+        telegramChatId,
+        autoScan,
+        sensitivity,
+        multiplier,
+        useFilter,
+        scanLookbackHours,
+        updatedAt: Date.now()
+      }, { merge: true });
+    } catch (e) {
+      console.error('Error saving settings:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      const timer = setTimeout(() => {
+        saveSettingsToFirebase();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [telegramEnabled, telegramToken, telegramChatId, autoScan, sensitivity, multiplier, useFilter, scanLookbackHours, user]);
+
+  const login = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      console.error('Login Error:', e);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error('Logout Error:', e);
+    }
+  };
+
+  useEffect(() => {
+    localStorage.setItem('telegramEnabled', telegramEnabled.toString());
+    localStorage.setItem('telegramToken', telegramToken);
+    localStorage.setItem('telegramChatId', telegramChatId);
+    localStorage.setItem('pushEnabled', pushEnabled.toString());
+  }, [telegramEnabled, telegramToken, telegramChatId, pushEnabled]);
+
+  const sendTelegramMessage = async (message: string) => {
+    if (!telegramEnabled || !telegramToken || !telegramChatId) return;
+    try {
+      const response = await fetch('/api/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: telegramToken,
+          chatId: telegramChatId,
+          text: message,
+          parseMode: 'HTML'
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Telegram Proxy Error:', errorData);
+      }
+    } catch (e) {
+      console.error('Telegram Error:', e);
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      alert('Browser notifications are not supported in this browser.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      setPushEnabled(true);
+    } else {
+      setPushEnabled(false);
+    }
+  };
+
+  const showPushNotification = (title: string, body: string) => {
+    if (!pushEnabled || !('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+      new Notification(title, { 
+        body, 
+        icon: 'https://bin.bnbstatic.com/static/images/common/favicon.ico' 
+      });
+    } catch (e) {
+      console.error('Push Notification Error:', e);
+    }
+  };
 
   // Check for alerts every 10 seconds
   useEffect(() => {
@@ -101,13 +264,33 @@ export default function App() {
           if (!alert.triggered && now >= alert.alertTime) {
             // Trigger alert
             const newNotification = {
-              id: Math.random().toString(36).substr(2, 9),
+              id: alert.id, // Use alert ID for consistency and deduplication
               symbol: alert.symbol,
               type: alert.type,
               time: new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' }),
-              message: `30m Alert: ${alert.symbol} ${alert.type} signal reached!`
+              message: `30m Alert: ${alert.symbol}.P ${alert.type} signal reached!`,
+              timestamp: Date.now()
             };
-            setNotifications(n => [newNotification, ...n].slice(0, 5));
+            
+            setNotifications(n => {
+              if (n.find(item => item.id === alert.id)) return n;
+              return [newNotification, ...n].slice(0, 5);
+            });
+
+            setNotificationHistory(n => {
+              if (n.find(item => item.id === alert.id)) return n;
+              return [newNotification, ...n].slice(0, 100);
+            });
+
+            // Send Phone Notifications
+            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}.P</b>\nType: ${alert.type}\nTime: ${newNotification.time}\nMessage: ${newNotification.message}`;
+            sendTelegramMessage(phoneMsg);
+            showPushNotification(`Signal Alert: ${alert.symbol}.P`, `${alert.type} signal reached!`);
+            
+            // Auto dismiss floating notification after 8 seconds
+            setTimeout(() => {
+              setNotifications(prev => prev.filter(n => n.id !== alert.id));
+            }, 8000);
             
             if (soundEnabled) {
               const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
@@ -148,22 +331,44 @@ export default function App() {
     const alertTime = signalTime + (30 * 60 * 1000); // 30 minutes later
     const id = `${symbol}-${signalTime}`;
     
-    if (alerts.find(a => a.id === id)) return; // Already exists
-
-    setAlerts(prev => [...prev, {
-      id,
-      symbol,
-      type,
-      signalTime,
-      alertTime,
-      triggered: false
-    }]);
+    setAlerts(prev => {
+      if (prev.find(a => a.id === id)) return prev;
+      return [...prev, {
+        id,
+        symbol,
+        type,
+        signalTime,
+        alertTime,
+        triggered: false
+      }];
+    });
   };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedSymbol(text);
     setTimeout(() => setCopiedSymbol(null), 2000);
+  };
+
+  const fetchWithRetry = async (url: string, retries = 3, backoff = 500): Promise<Response> => {
+    try {
+      const response = await fetch(url);
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const wait = retryAfter ? parseInt(retryAfter) * 1000 : backoff;
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, wait));
+          return fetchWithRetry(url, retries - 1, backoff * 2);
+        }
+      }
+      return response;
+    } catch (error) {
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        return fetchWithRetry(url, retries - 1, backoff * 2);
+      }
+      throw error;
+    }
   };
 
   const startScan = async () => {
@@ -173,7 +378,7 @@ export default function App() {
     
     try {
       // Fetch Binance Futures symbols
-      const exchangeInfoRes = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
+      const exchangeInfoRes = await fetchWithRetry('https://fapi.binance.com/fapi/v1/exchangeInfo');
       const exchangeInfo = await exchangeInfoRes.json();
       const usdtSymbols = exchangeInfo.symbols
         .filter((s: any) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
@@ -182,7 +387,7 @@ export default function App() {
       const total = usdtSymbols.length;
       setTotalSymbols(total);
       const results: any[] = [];
-      const batchSize = 10; // Process 10 symbols at a time
+      const batchSize = 5; // Reduced batch size for stability
 
       for (let i = 0; i < usdtSymbols.length; i += batchSize) {
         const batch = usdtSymbols.slice(i, i + batchSize);
@@ -192,7 +397,7 @@ export default function App() {
           if (currentIndex >= usdtSymbols.length) return;
           
           try {
-            const klinesRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${s}&interval=${timeframe}&limit=500`);
+            const klinesRes = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${s}&interval=${timeframe}&limit=500`);
             if (!klinesRes.ok) return;
             
             const data = await klinesRes.json();
@@ -204,14 +409,16 @@ export default function App() {
               close: parseFloat(d[4]),
               volume: parseFloat(d[5]),
             }));
-
+            
             const processed = processIndicators(formatted, { 
               sensitivity, 
               multiplier, 
               useFilter,
               rsiHistLength,
               rsiHistMALength,
-              rsiHistMAType
+              rsiHistMAType,
+              kamaAlpha,
+              rsiSource
             });
 
             const now = Date.now();
@@ -249,7 +456,11 @@ export default function App() {
                 lastTouchTime: candle.lastTouchTime,
                 scanTime: Date.now()
               };
-              results.push(signalData);
+              
+              // Ensure uniqueness in results array
+              if (!results.find(r => r.id === signalData.id)) {
+                results.push(signalData);
+              }
               
               // Add to history
               setSignalHistory(prev => {
@@ -274,8 +485,8 @@ export default function App() {
         const sortedResults = [...results].sort((a, b) => (b.lastTouchTime || 0) - (a.lastTouchTime || 0));
         setScanResults(sortedResults);
         
-        // Small pause between batches to be safe with rate limits
-        await new Promise(r => setTimeout(r, 50));
+        // Increased pause between batches to prevent rate limits
+        await new Promise(r => setTimeout(r, 200));
       }
     } catch (err) {
       console.error('Scan failed:', err);
@@ -322,9 +533,11 @@ export default function App() {
       useFilter,
       rsiHistLength,
       rsiHistMALength,
-      rsiHistMAType
+      rsiHistMAType,
+      kamaAlpha,
+      rsiSource
     });
-  }, [candles, sensitivity, multiplier, useFilter, rsiHistLength, rsiHistMALength, rsiHistMAType]);
+  }, [candles, sensitivity, multiplier, useFilter, rsiHistLength, rsiHistMALength, rsiHistMAType, kamaAlpha, rsiSource]);
 
   const latest = processedData[processedData.length - 1];
 
@@ -350,6 +563,34 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
+            {authLoading ? (
+              <div className="w-8 h-8 rounded-full bg-white/5 animate-pulse" />
+            ) : user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-end hidden sm:flex">
+                  <span className="text-xs font-medium text-white">{user.displayName}</span>
+                  <button onClick={logout} className="text-[10px] text-orange-500 hover:text-orange-400 flex items-center gap-1">
+                    <LogOut className="w-2 h-2" /> Logout
+                  </button>
+                </div>
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="Profile" className="w-8 h-8 rounded-full border border-orange-500/50" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center border border-orange-500/50">
+                    <UserIcon className="w-4 h-4 text-orange-500" />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={login}
+                className="border-orange-500/50 text-orange-500 hover:bg-orange-500/10 gap-2"
+              >
+                <LogIn className="w-4 h-4" /> Login
+              </Button>
+            )}
             <Button 
               variant="outline" 
               size="icon" 
@@ -374,6 +615,12 @@ export default function App() {
               </TabsTrigger>
               <TabsTrigger value="history" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
                 <History className="w-4 h-4" /> Signal History
+              </TabsTrigger>
+              <TabsTrigger value="alerts" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black relative">
+                <Bell className="w-4 h-4" /> Alerts
+                {notificationHistory.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
+                )}
               </TabsTrigger>
             </TabsList>
             
@@ -520,62 +767,70 @@ export default function App() {
                     />
 
                     {/* Signals */}
-                    <Scatter 
-                      data={processedData.filter(d => d.buySignal)} 
-                      dataKey="close"
-                      shape={(props: any) => {
-                        const { cx, cy, payload, yAxis } = props;
-                        if (isNaN(cx) || isNaN(cy) || !yAxis || !yAxis.scale) return null;
-                        const yLow = yAxis.scale(payload.low);
-                        return (
-                          <g transform={`translate(${cx},${yLow + 15})`}>
-                            <path d="M-8,10 L8,10 L8,-2 L0,-10 L-8,-2 Z" fill="#4ade80" />
-                            <text x="0" y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">B</text>
-                            {payload.isStrong && <text x="0" y="14" textAnchor="middle" fill="#4ade80" fontSize="12" fontWeight="bold">+</text>}
-                          </g>
-                        );
-                      }}
-                    />
-                    <Scatter 
-                      data={processedData.filter(d => d.sellSignal)} 
-                      dataKey="close"
-                      shape={(props: any) => {
-                        const { cx, cy, payload, yAxis } = props;
-                        if (isNaN(cx) || isNaN(cy) || !yAxis || !yAxis.scale) return null;
-                        const yHigh = yAxis.scale(payload.high);
-                        return (
-                          <g transform={`translate(${cx},${yHigh - 15})`}>
-                            <path d="M-8,-10 L8,-10 L8,2 L0,10 L-8,2 Z" fill="#f43f5e" />
-                            <text x="0" y="2" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">S</text>
-                            {payload.isStrong && <text x="0" y="-12" textAnchor="middle" fill="#f43f5e" fontSize="12" fontWeight="bold">+</text>}
-                          </g>
-                        );
-                      }}
-                    />
+                    {confirmationSignals && (
+                      <>
+                        <Scatter 
+                          data={processedData.filter(d => d.buySignal)} 
+                          dataKey="close"
+                          shape={(props: any) => {
+                            const { cx, cy, payload, yAxis } = props;
+                            if (isNaN(cx) || isNaN(cy) || !yAxis || !yAxis.scale) return null;
+                            const yLow = yAxis.scale(payload.low);
+                            return (
+                              <g transform={`translate(${cx},${yLow + 15})`}>
+                                <path d="M-8,10 L8,10 L8,-2 L0,-10 L-8,-2 Z" fill="#4ade80" />
+                                <text x="0" y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">B</text>
+                                {payload.isStrong && <text x="0" y="14" textAnchor="middle" fill="#4ade80" fontSize="12" fontWeight="bold">+</text>}
+                              </g>
+                            );
+                          }}
+                        />
+                        <Scatter 
+                          data={processedData.filter(d => d.sellSignal)} 
+                          dataKey="close"
+                          shape={(props: any) => {
+                            const { cx, cy, payload, yAxis } = props;
+                            if (isNaN(cx) || isNaN(cy) || !yAxis || !yAxis.scale) return null;
+                            const yHigh = yAxis.scale(payload.high);
+                            return (
+                              <g transform={`translate(${cx},${yHigh - 15})`}>
+                                <path d="M-8,-10 L8,-10 L8,2 L0,10 L-8,2 Z" fill="#f43f5e" />
+                                <text x="0" y="2" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">S</text>
+                                {payload.isStrong && <text x="0" y="-12" textAnchor="middle" fill="#f43f5e" fontSize="12" fontWeight="bold">+</text>}
+                              </g>
+                            );
+                          }}
+                        />
+                      </>
+                    )}
                     
                     {/* Contrarian Signals */}
-                    <Scatter 
-                      data={processedData.filter(d => d.contraBuy)} 
-                      dataKey="low"
-                      shape={(props: any) => {
-                        const { cx, payload, yAxis } = props;
-                        if (!yAxis || !yAxis.scale) return null;
-                        const yLow = yAxis.scale(payload.low);
-                        if (isNaN(cx) || isNaN(yLow)) return null;
-                        return <circle cx={cx} cy={yLow + 25} r="4" fill="#a855f7" />;
-                      }}
-                    />
-                    <Scatter 
-                      data={processedData.filter(d => d.contraSell)} 
-                      dataKey="high"
-                      shape={(props: any) => {
-                        const { cx, payload, yAxis } = props;
-                        if (!yAxis || !yAxis.scale) return null;
-                        const yHigh = yAxis.scale(payload.high);
-                        if (isNaN(cx) || isNaN(yHigh)) return null;
-                        return <circle cx={cx} cy={yHigh - 25} r="4" fill="#a855f7" />;
-                      }}
-                    />
+                    {contrarianSignals && (
+                      <>
+                        <Scatter 
+                          data={processedData.filter(d => d.contraBuy)} 
+                          dataKey="low"
+                          shape={(props: any) => {
+                            const { cx, payload, yAxis } = props;
+                            if (!yAxis || !yAxis.scale) return null;
+                            const yLow = yAxis.scale(payload.low);
+                            if (isNaN(cx) || isNaN(yLow)) return null;
+                            return <circle cx={cx} cy={yLow + 25} r="4" fill="#a855f7" />;
+                          }}
+                        />
+                        <Scatter 
+                          data={processedData.filter(d => d.contraSell)} 
+                          dataKey="high"
+                          shape={(props: any) => {
+                            const { cx, payload, yAxis } = props;
+                            if (!yAxis || !yAxis.scale) return null;
+                            const yHigh = yAxis.scale(payload.high);
+                            if (isNaN(cx) || isNaN(yHigh)) return null;
+                            return <circle cx={cx} cy={yHigh - 25} r="4" fill="#a855f7" />;
+                          }}
+                        />
+                      </>
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
               )}
@@ -649,6 +904,36 @@ export default function App() {
                 </div>
                 
                 <div className="pt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-zinc-100">Confirmation Signals</span>
+                    <button 
+                      onClick={() => setConfirmationSignals(!confirmationSignals)}
+                      className={cn(
+                        "w-8 h-4 rounded-full transition-colors relative",
+                        confirmationSignals ? "bg-orange-500" : "bg-orange-900/50"
+                      )}
+                    >
+                      <div className={cn(
+                        "absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform",
+                        confirmationSignals ? "translate-x-4.5" : "translate-x-0.5"
+                      )} />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-zinc-100">Contrarian Signals</span>
+                    <button 
+                      onClick={() => setContrarianSignals(!contrarianSignals)}
+                      className={cn(
+                        "w-8 h-4 rounded-full transition-colors relative",
+                        contrarianSignals ? "bg-orange-500" : "bg-orange-900/50"
+                      )}
+                    >
+                      <div className={cn(
+                        "absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform",
+                        contrarianSignals ? "translate-x-4.5" : "translate-x-0.5"
+                      )} />
+                    </button>
+                  </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-zinc-100">Trend Filter</span>
                     <button 
@@ -724,6 +1009,17 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
+                  <label className="text-xs text-zinc-100 uppercase font-medium">Source</label>
+                  <select 
+                    value={rsiSource} 
+                    onChange={(e) => setRsiSource(e.target.value as 'CLOSE' | 'HL2')}
+                    className="w-full bg-orange-950/40 border border-orange-500/20 rounded-md h-8 text-sm px-2 focus:outline-none focus:ring-1 focus:ring-orange-500 text-zinc-100"
+                  >
+                    <option value="CLOSE">Close</option>
+                    <option value="HL2">(H + L) / 2</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
                   <label className="text-xs text-zinc-100 uppercase font-medium">MA Type</label>
                   <select 
                     value={rsiHistMAType} 
@@ -735,6 +1031,17 @@ export default function App() {
                     ))}
                   </select>
                 </div>
+                {rsiHistMAType === 'KAMA' && (
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-100 uppercase font-medium">Kama's Alpha</label>
+                    <Input 
+                      type="number" 
+                      value={kamaAlpha} 
+                      onChange={(e) => setKamaAlpha(parseInt(e.target.value))}
+                      className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -805,6 +1112,73 @@ export default function App() {
                     className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
                   />
                   <p className="text-[10px] text-zinc-500 italic">Filter signals confirmed within the last {scanLookbackHours} hours.</p>
+                </div>
+
+                <div className="pt-4 border-t border-white/10 space-y-4">
+                  <p className="text-[10px] text-zinc-500 uppercase font-bold">Phone Notifications</p>
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Send className="w-3 h-3 text-sky-400" />
+                        <span className="text-xs text-zinc-300">Telegram Alerts</span>
+                      </div>
+                      <button 
+                        onClick={() => setTelegramEnabled(!telegramEnabled)}
+                        className={cn(
+                          "w-8 h-4 rounded-full transition-colors relative",
+                          telegramEnabled ? "bg-sky-500" : "bg-zinc-800"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform",
+                          telegramEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                        )} />
+                      </button>
+                    </div>
+
+                    {telegramEnabled && (
+                      <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+                        <Input 
+                          placeholder="Bot Token"
+                          value={telegramToken}
+                          onChange={(e) => setTelegramToken(e.target.value)}
+                          className="bg-black/40 border-white/10 h-7 text-[10px] text-zinc-300"
+                        />
+                        <Input 
+                          placeholder="Chat ID"
+                          value={telegramChatId}
+                          onChange={(e) => setTelegramChatId(e.target.value)}
+                          className="bg-black/40 border-white/10 h-7 text-[10px] text-zinc-300"
+                        />
+                        <p className="text-[9px] text-zinc-500 leading-tight">
+                          Get Token from @BotFather and Chat ID from @userinfobot
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-3 h-3 text-emerald-400" />
+                        <span className="text-xs text-zinc-300">Browser Push</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          if (!pushEnabled) requestNotificationPermission();
+                          else setPushEnabled(false);
+                        }}
+                        className={cn(
+                          "w-8 h-4 rounded-full transition-colors relative",
+                          pushEnabled ? "bg-emerald-500" : "bg-zinc-800"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform",
+                          pushEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                        )} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 {lastScanTime && (
                   <p className="text-[10px] text-zinc-500 text-right">
@@ -925,7 +1299,7 @@ export default function App() {
                     <AnimatePresence mode="popLayout">
                       {scanResults.map((res) => (
                         <motion.tr 
-                          key={res.symbol}
+                          key={res.id}
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.95 }}
@@ -1068,7 +1442,17 @@ export default function App() {
                       signalHistory.map((res) => (
                         <tr key={res.id} className="hover:bg-orange-500/5 transition-colors group">
                           <td className="p-4">
-                            <span className="font-bold text-zinc-100">{res.symbol}.P</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-zinc-100">{res.symbol}.P</span>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-6 w-6 text-zinc-600 hover:text-orange-500"
+                                onClick={() => copyToClipboard(res.symbol)}
+                              >
+                                {copiedSymbol === res.symbol ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                              </Button>
+                            </div>
                           </td>
                           <td className="p-4">
                             <Badge className={cn(
@@ -1103,6 +1487,84 @@ export default function App() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="alerts" className="space-y-6 mt-0">
+          <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl">
+            <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                    <BellRing className="w-5 h-5 text-orange-500" /> Alert Notifications
+                  </CardTitle>
+                  <CardDescription className="text-zinc-400">
+                    Real-time alerts for price targets and signal confirmations
+                  </CardDescription>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setNotificationHistory([])}
+                  className="border-orange-500/20 hover:bg-orange-500/10 text-xs"
+                >
+                  Clear All
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="max-h-[600px] overflow-y-auto custom-scrollbar">
+                {notificationHistory.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <Bell className="w-12 h-12 text-zinc-800 mx-auto mb-4" />
+                    <p className="text-zinc-500">No active alerts. Alerts will appear here when signals are triggered.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {notificationHistory.map((notif) => (
+                      <div key={notif.id} className="p-4 flex items-start gap-4 hover:bg-white/[0.02] transition-colors group">
+                        <div className={cn(
+                          "p-2 rounded-lg shrink-0",
+                          notif.type === 'BUY' ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
+                        )}>
+                          {notif.type === 'BUY' ? <ArrowUpCircle className="w-5 h-5" /> : <ArrowDownCircle className="w-5 h-5" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              {notif.symbol}.P 
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-5 w-5 text-zinc-600 hover:text-orange-500"
+                                onClick={() => copyToClipboard(notif.symbol)}
+                              >
+                                {copiedSymbol === notif.symbol ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                              </Button>
+                              <Badge className={cn(
+                                "text-[10px] px-1.5 py-0",
+                                notif.type === 'BUY' ? "bg-emerald-500/20 text-emerald-500 border-emerald-500/20" : "bg-rose-500/20 text-rose-500 border-rose-500/20"
+                              )}>
+                                {notif.type}
+                              </Badge>
+                            </h4>
+                            <span className="text-[10px] text-zinc-500 font-mono">{notif.time}</span>
+                          </div>
+                          <p className="text-xs text-zinc-400 leading-relaxed">{notif.message}</p>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-zinc-600 hover:text-rose-500"
+                          onClick={() => setNotificationHistory(prev => prev.filter(n => n.id !== notif.id))}
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

@@ -352,7 +352,9 @@ export function processIndicators(candles: Candle[], settings: {
   useFilter: boolean,
   rsiHistLength: number,
   rsiHistMALength: number,
-  rsiHistMAType: string
+  rsiHistMAType: string,
+  kamaAlpha?: number,
+  rsiSource?: 'CLOSE' | 'HL2'
 }) {
   if (!candles || candles.length === 0) return [];
 
@@ -360,6 +362,8 @@ export function processIndicators(candles: Candle[], settings: {
   const high = candles.map(c => c.high);
   const low = candles.map(c => c.low);
   const hl2 = candles.map(c => (c.high + c.low) / 2);
+  
+  const rsiSourceData = settings.rsiSource === 'CLOSE' ? close : hl2;
 
   const { superTrend, direction } = calculateSupertrend(high, low, close, settings.sensitivity, settings.multiplier);
   const sma20 = calculateSMA(close, 20);
@@ -368,7 +372,7 @@ export function processIndicators(candles: Candle[], settings: {
   const adx = calculateADX(high, low, close, 14);
 
   // RSI Histogram Calculation
-  const rsiHistRaw = calculateRSI(hl2, settings.rsiHistLength).map(v => v !== null ? Math.min(100, Math.max(-100, (v - 50) * 4)) : 0);
+  const rsiHistRaw = calculateRSI(rsiSourceData, settings.rsiHistLength).map(v => v !== null ? Math.min(100, Math.max(-100, (v - 50) * 4)) : 0);
   
   let rsiHistMA: (number | null)[] = [];
   switch (settings.rsiHistMAType) {
@@ -377,7 +381,7 @@ export function processIndicators(candles: Candle[], settings: {
     case 'WMA': rsiHistMA = calculateWMA(rsiHistRaw, settings.rsiHistMALength); break;
     case 'HMA': rsiHistMA = calculateHMA(rsiHistRaw, settings.rsiHistMALength); break;
     case 'JMA': rsiHistMA = calculateJMA(rsiHistRaw, settings.rsiHistMALength); break;
-    case 'KAMA': rsiHistMA = calculateKAMA(rsiHistRaw, settings.rsiHistMALength); break;
+    case 'KAMA': rsiHistMA = calculateKAMA(rsiHistRaw, settings.rsiHistMALength, settings.kamaAlpha || 3); break;
     default: rsiHistMA = rsiHistRaw;
   }
 
