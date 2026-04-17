@@ -20,7 +20,7 @@ if (!admin.apps.length) {
     projectId: firebaseConfig.projectId,
   });
 }
-const adminDb = getFirestore();
+const adminDb = getFirestore(firebaseConfig.firestoreDatabaseId);
 
 import { initializeApp } from "firebase/app";
 import { getFirestore as getClientFirestore } from "firebase/firestore";
