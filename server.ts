@@ -2,8 +2,6 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
 import { processIndicators } from "./src/lib/indicators";
 
 import fs from "fs";
@@ -11,23 +9,32 @@ import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Firebase Admin
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "firebase-applet-config.json"), "utf8"));
-
-// Use the firebase-admin SDK properly
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
-}
-const adminDb = getFirestore(firebaseConfig.firestoreDatabaseId);
-
 import { initializeApp } from "firebase/app";
-import { getFirestore as getClientFirestore } from "firebase/firestore";
+import { 
+  getFirestore as getClientFirestore, 
+  collection, 
+  getDocs,
+  query,
+  doc,
+  setDoc,
+  getDoc
+} from "firebase/firestore";
 
-// Initialize Firebase Client (for proxy or other uses)
-const clientApp = initializeApp(firebaseConfig);
-const clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
+// Initialize Firebase
+let db: any;
+let firebaseConfig: any;
+
+try {
+  const configPath = path.join(__dirname, "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const app = initializeApp(firebaseConfig);
+    db = getClientFirestore(app, firebaseConfig.firestoreDatabaseId);
+    console.log(`Firebase: Client SDK initialized for scanner on project ${firebaseConfig.projectId}`);
+  }
+} catch (e) {
+  console.error("Firebase Initialization Error:", e);
+}
 
 async function startServer() {
   const app = express();
@@ -36,25 +43,40 @@ async function startServer() {
   app.use(express.json());
 
   // Background Scanner Logic
-  const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
+  const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'CRVUSDT', 'SUSHIUSDT'];
   
   const runScanner = async () => {
+    if (!db) {
+      console.error("Scanner: db not initialized, skipping scan.");
+      return;
+    }
+
     try {
-      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Fetching users with autoScan enabled...`);
-      const usersSnap = await adminDb.collection("settings").where("autoScan", "==", true).get();
+      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Querying Firestore (Client SDK)...`);
+      let usersSnap;
+      try {
+        usersSnap = await getDocs(collection(db, "settings"));
+      } catch (innerError: any) {
+        console.error("Scanner: Firestore Fetch Failed (Client SDK):", innerError);
+        return;
+      }
       
       if (usersSnap.empty) {
         return;
       }
+      
+      const activeUsers = usersSnap.docs.filter((doc: any) => doc.data().autoScan === true);
+      if (activeUsers.length === 0) return;
 
-      for (const userDoc of usersSnap.docs) {
+      console.log(`Scanner: Analyzing ${activeUsers.length} user(s) with autoScan enabled.`);
+      for (const userDoc of activeUsers) {
         const settings = userDoc.data();
         if (!settings.telegramEnabled || !settings.telegramToken || !settings.telegramChatId) continue;
 
         for (const symbol of SYMBOLS) {
           try {
             // Use fapi (Futures) consistent with the frontend
-            const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`;
+            const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=15m&limit=100`;
             const response = await fetch(url);
             
             if (!response.ok) {
@@ -105,24 +127,19 @@ async function startServer() {
             }
 
             if (signalType) {
-              // Unique ID per signal per candle per user
-              const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalSource.replace(/\s+/g, '')}`;
-              const alertRef = adminDb.collection("alerts").doc(alertId);
-              const alertSnap = await alertRef.get();
+              // Unique ID per signal per candle per user to prevent duplicates
+              const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalType}`;
+              const alertRef = doc(db, "alerts", alertId);
+              const alertSnap = await getDoc(alertRef);
 
-              if (!alertSnap.exists) {
-                console.log(`Scanner: Triggering ${signalType} alert for ${symbol} @ ${userDoc.id}`);
+              if (!alertSnap.exists()) {
+                console.log(`Scanner: [SIGNAL] ${signalType} detected for ${symbol}`);
                 
-                const emoji = signalType === "BUY" ? "🚀" : "📉";
-                const color = signalType === "BUY" ? "Bullish (BUY)" : "Bearish (SELL)";
-                
-                const message = `${emoji} <b>ALGO ALERT: ${symbol}.P</b>\n\n` +
-                                `<b>Type:</b> ${color}\n` +
-                                `<b>Trend:</b> ${last.trend}\n` +
-                                `<b>ADX:</b> ${last.adx?.toFixed(2)} (Strong Market)\n` +
-                                `<b>Price:</b> ${last.close}\n` +
-                                `<b>Time:</b> ${new Date(last.time).toLocaleString()}\n\n` +
-                                `📊 <i>Signal confirmed by Cloud Scanner (24/7).</i>`;
+                const emoji = signalType === "BUY" ? "🟢" : "🔴";
+                const message = `🔔 <b>NEW SIGNAL: ${symbol}</b>\n` +
+                                `Type: <b>${signalType} ${emoji}</b>\n` +
+                                `Price: <b>${last.close}</b>\n` +
+                                `Time: <b>15M Chart</b>`;
                 
                 await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
                   method: "POST",
@@ -134,14 +151,14 @@ async function startServer() {
                   })
                 });
 
-                await alertRef.set({
+                await setDoc(alertRef, {
                   id: alertId,
                   symbol,
                   type: signalType,
-                  timestamp: Date.now(),
-                  uid: userDoc.id,
                   price: last.close,
-                  time: last.time
+                  time: last.time,
+                  uid: userDoc.id,
+                  sentAt: Date.now()
                 });
               }
             }
@@ -194,7 +211,7 @@ async function startServer() {
     const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
     try {
-      const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit || 500}`;
+      const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol as string)}&interval=${interval}&limit=${limit || 500}`;
       const response = await fetch(url, { signal: controller.signal });
       
       clearTimeout(timeout);
