@@ -13,7 +13,14 @@
         "sensitivity": { "type": "number" },
         "multiplier": { "type": "number" },
         "useFilter": { "type": "boolean" },
-        "scanLookbackHours": { "type": "number" }
+        "rsiHistLength": { "type": "number" },
+        "rsiHistMALength": { "type": "number" },
+        "rsiHistMAType": { "type": "string" },
+        "rsiSource": { "type": "string" },
+        "zigzagLength": { "type": "number" },
+        "tpRatio": { "type": "number" },
+        "slLookback": { "type": "number" },
+        "scanLookbackMinutes": { "type": "number" }
       },
       "required": ["uid"]
     },

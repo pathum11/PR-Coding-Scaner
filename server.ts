@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 import { processIndicators } from "./src/lib/indicators";
 
 import fs from "fs";
@@ -13,15 +14,20 @@ const __dirname = path.dirname(__filename);
 // Initialize Firebase Admin
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "firebase-applet-config.json"), "utf8"));
 
+// Use the firebase-admin SDK properly
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
     projectId: firebaseConfig.projectId,
-    databaseURL: `https://${firebaseConfig.projectId}.firebaseio.com`
   });
 }
+const adminDb = getFirestore();
 
-const db = admin.firestore();
+import { initializeApp } from "firebase/app";
+import { getFirestore as getClientFirestore } from "firebase/firestore";
+
+// Initialize Firebase Client (for proxy or other uses)
+const clientApp = initializeApp(firebaseConfig);
+const clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
 
 async function startServer() {
   const app = express();
@@ -34,8 +40,9 @@ async function startServer() {
   
   const runScanner = async () => {
     try {
-      console.log("Running background scanner...");
-      const usersSnap = await db.collection("settings").where("autoScan", "==", true).get();
+      console.log(`Scanner: Fetching users with autoScan enabled using Admin SDK...`);
+      const usersSnap = await adminDb.collection("settings").where("autoScan", "==", true).get();
+      console.log(`Scanner: Found ${usersSnap.size} users with autoScan enabled.`);
       
       for (const userDoc of usersSnap.docs) {
         const settings = userDoc.data();
@@ -55,29 +62,40 @@ async function startServer() {
             }));
 
             const results = processIndicators(candles, {
-              sensitivity: settings.sensitivity || 7,
-              multiplier: settings.multiplier || 4.3,
+              sensitivity: settings.sensitivity || 20,
+              multiplier: settings.multiplier || 3.0,
               useFilter: settings.useFilter || false,
-              rsiHistLength: 16,
-              rsiHistMALength: 7,
-              rsiHistMAType: 'KAMA'
+              rsiHistLength: settings.rsiHistLength || 14,
+              rsiHistMALength: settings.rsiHistMALength || 14,
+              rsiHistMAType: settings.rsiHistMAType || 'JMA',
+              kamaAlpha: settings.kamaAlpha || 3,
+              rsiSource: settings.rsiSource || 'CLOSE',
+              zigzagLength: settings.zigzagLength || 14,
+              zigzagPhase: settings.zigzagPhase || 50,
+              zigzagPower: settings.zigzagPower || 2,
+              tpRatio: settings.tpRatio || 2.0,
+              slLookback: settings.slLookback || 3
             });
 
             const last = results[results.length - 1];
-            const prev = results[results.length - 2];
-
+            
             let signalType = "";
-            if (last.buySignal && !prev.buySignal) signalType = "BUY";
-            if (last.sellSignal && !prev.sellSignal) signalType = "SELL";
+            let signalSource = "Combined Strategy";
+            
+            if (last.buySignal) {
+              signalType = "BUY";
+            } else if (last.sellSignal) {
+              signalType = "SELL";
+            }
 
             if (signalType) {
-              const alertId = `${symbol}-${last.time}-${userDoc.id}`;
-              const alertRef = db.collection("alerts").doc(alertId);
-              const alertDoc = await alertRef.get();
+              const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalSource.replace(/\s+/g, '')}`;
+              const alertRef = adminDb.collection("alerts").doc(alertId);
+              const alertSnap = await alertRef.get();
 
-              if (!alertDoc.exists) {
+              if (!alertSnap.exists) {
                 // Send Telegram
-                const message = `🚀 <b>Server Alert: ${symbol}.P</b>\nType: ${signalType}\nTime: ${new Date(last.time).toLocaleTimeString()}\nSignal confirmed by 24/7 Scanner.`;
+                const message = `🚀 <b>Server Alert: ${symbol}.P</b>\nType: ${signalType}\nSource: ${signalSource}\nTime: ${new Date(last.time).toLocaleTimeString()}\nSignal confirmed by 24/7 Scanner.`;
                 
                 await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
                   method: "POST",
@@ -134,6 +152,51 @@ async function startServer() {
     } catch (error) {
       console.error("Telegram Proxy Error:", error);
       res.status(500).json({ error: "Failed to send Telegram message" });
+    }
+  });
+
+  // Binance Klines Proxy
+  app.get("/api/klines", async (req, res) => {
+    const { symbol, interval, limit } = req.query;
+    if (!symbol || !interval) {
+      return res.status(400).json({ error: "Symbol and interval are required" });
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+    try {
+      const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit || 500}`;
+      const response = await fetch(url, { signal: controller.signal });
+      
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const text = await response.text();
+        return res.status(response.status).json({ error: `Binance API error: ${text}` });
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      clearTimeout(timeout);
+      console.error(`Klines Proxy Error for ${symbol}:`, error.name === 'AbortError' ? 'Request timed out' : error.message);
+      res.status(500).json({ 
+        error: error.name === 'AbortError' ? "Request timed out" : "Failed to fetch klines from Binance" 
+      });
+    }
+  });
+
+  // Binance Exchange Info Proxy
+  app.get("/api/exchangeInfo", async (req, res) => {
+    try {
+      const url = `https://fapi.binance.com/fapi/v1/exchangeInfo`;
+      const response = await fetch(url);
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } catch (error) {
+      console.error("ExchangeInfo Proxy Error:", error);
+      res.status(500).json({ error: "Failed to fetch exchange info from Binance" });
     }
   });
 

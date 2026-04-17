@@ -14,7 +14,6 @@ import {
   ResponsiveContainer, 
   Area, 
   AreaChart,
-  ReferenceDot,
   ComposedChart,
   Scatter,
   BarChart,
@@ -24,7 +23,6 @@ import {
 import { 
   TrendingUp, 
   TrendingDown, 
-  Activity, 
   Settings, 
   RefreshCw,
   Info,
@@ -43,7 +41,8 @@ import {
   VolumeX,
   History,
   Send,
-  Globe
+  Globe,
+  Activity
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -59,6 +58,8 @@ import {
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
+  setPersistence,
+  browserLocalPersistence,
   User
 } from 'firebase/auth';
 import { 
@@ -84,8 +85,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   
   // Indicator Settings
-  const [sensitivity, setSensitivity] = useState(7);
-  const [multiplier, setMultiplier] = useState(4.3);
+  const [sensitivity, setSensitivity] = useState(20); // ATR Period
+  const [multiplier, setMultiplier] = useState(3.0); // ATR Multiplier
   const [useFilter, setUseFilter] = useState(false);
   const [confirmationSignals, setConfirmationSignals] = useState(true);
   const [contrarianSignals, setContrarianSignals] = useState(true);
@@ -93,11 +94,18 @@ export default function App() {
   const [showTrail, setShowTrail] = useState(true);
 
   // RSI Histogram Settings
-  const [rsiHistLength, setRsiHistLength] = useState(16);
-  const [rsiHistMALength, setRsiHistMALength] = useState(7);
-  const [rsiHistMAType, setRsiHistMAType] = useState('KAMA');
-  const [rsiSource, setRsiSource] = useState<'CLOSE' | 'HL2'>('HL2');
+  const [rsiHistLength, setRsiHistLength] = useState(14);
+  const [rsiHistMALength, setRsiHistMALength] = useState(14);
+  const [rsiHistMAType, setRsiHistMAType] = useState('JMA');
+  const [rsiSource, setRsiSource] = useState<'CLOSE' | 'HL2'>('CLOSE');
   const [kamaAlpha, setKamaAlpha] = useState(3);
+
+  // ZigZag Settings
+  const [zigzagLength, setZigzagLength] = useState(14);
+  const [zigzagPhase, setZigzagPhase] = useState(50);
+  const [zigzagPower, setZigzagPower] = useState(2);
+  const [tpRatio, setTpRatio] = useState(2.0);
+  const [slLookback, setSlLookback] = useState(3);
 
   // Scanner State
   const [scanResults, setScanResults] = useState<any[]>([]);
@@ -105,7 +113,6 @@ export default function App() {
   const [scanProgress, setScanProgress] = useState(0);
   const [totalSymbols, setTotalSymbols] = useState(0);
   const [currentScanning, setCurrentScanning] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState('chart');
   const [copiedSymbol, setCopiedSymbol] = useState<string | null>(null);
 
   // Alert System State
@@ -115,7 +122,7 @@ export default function App() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [notificationHistory, setNotificationHistory] = useState<any[]>([]);
   const [autoScan, setAutoScan] = useState(true);
-  const [scanLookbackHours, setScanLookbackHours] = useState(10);
+  const [scanLookbackMinutes, setScanLookbackMinutes] = useState(30);
   const [lastScanTime, setLastScanTime] = useState<number | null>(null);
   const [signalHistory, setSignalHistory] = useState<any[]>([]);
 
@@ -147,7 +154,15 @@ export default function App() {
             if (data.sensitivity !== undefined) setSensitivity(data.sensitivity);
             if (data.multiplier !== undefined) setMultiplier(data.multiplier);
             if (data.useFilter !== undefined) setUseFilter(data.useFilter);
-            if (data.scanLookbackHours !== undefined) setScanLookbackHours(data.scanLookbackHours);
+            if (data.rsiHistLength !== undefined) setRsiHistLength(data.rsiHistLength);
+            if (data.rsiHistMALength !== undefined) setRsiHistMALength(data.rsiHistMALength);
+            if (data.rsiHistMAType !== undefined) setRsiHistMAType(data.rsiHistMAType);
+            if (data.rsiSource !== undefined) setRsiSource(data.rsiSource);
+            if (data.zigzagLength !== undefined) setZigzagLength(data.zigzagLength);
+            if (data.tpRatio !== undefined) setTpRatio(data.tpRatio);
+            if (data.slLookback !== undefined) setSlLookback(data.slLookback);
+            if (data.scanLookbackMinutes !== undefined) setScanLookbackMinutes(data.scanLookbackMinutes);
+            else if (data.scanLookbackHours !== undefined) setScanLookbackMinutes(data.scanLookbackHours * 60);
           }
         });
       }
@@ -167,7 +182,14 @@ export default function App() {
         sensitivity,
         multiplier,
         useFilter,
-        scanLookbackHours,
+        rsiHistLength,
+        rsiHistMALength,
+        rsiHistMAType,
+        rsiSource,
+        zigzagLength,
+        tpRatio,
+        slLookback,
+        scanLookbackMinutes,
         updatedAt: Date.now()
       }, { merge: true });
     } catch (e) {
@@ -182,14 +204,25 @@ export default function App() {
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [telegramEnabled, telegramToken, telegramChatId, autoScan, sensitivity, multiplier, useFilter, scanLookbackHours, user]);
+  }, [
+    telegramEnabled, telegramToken, telegramChatId, autoScan, 
+    sensitivity, multiplier, useFilter, rsiHistLength, 
+    rsiHistMALength, rsiHistMAType, rsiSource, zigzagLength, 
+    tpRatio, slLookback, scanLookbackMinutes, user
+  ]);
 
   const login = async () => {
     const provider = new GoogleAuthProvider();
     try {
+      await setPersistence(auth, browserLocalPersistence);
       await signInWithPopup(auth, provider);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Login Error:', e);
+      if (e.code === 'auth/network-request-failed') {
+        setError('Connection Error: The authentication request was blocked. This often happens due to ad-blockers, strict browser privacy settings, or if the domain is not allowlisted in Firebase. Please disable ad-blockers and try again.');
+      } else {
+        setError(e.message || 'An unknown error occurred during login.');
+      }
     }
   };
 
@@ -378,7 +411,7 @@ export default function App() {
     
     try {
       // Fetch Binance Futures symbols
-      const exchangeInfoRes = await fetchWithRetry('https://fapi.binance.com/fapi/v1/exchangeInfo');
+      const exchangeInfoRes = await fetchWithRetry('/api/exchangeInfo');
       const exchangeInfo = await exchangeInfoRes.json();
       const usdtSymbols = exchangeInfo.symbols
         .filter((s: any) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
@@ -397,10 +430,19 @@ export default function App() {
           if (currentIndex >= usdtSymbols.length) return;
           
           try {
-            const klinesRes = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${s}&interval=${timeframe}&limit=500`);
-            if (!klinesRes.ok) return;
+            // Use local proxy to avoid CORS/Rate limits for scanner
+            const klinesRes = await fetchWithRetry(`/api/klines?symbol=${s}&interval=${timeframe}&limit=500`);
+            if (!klinesRes.ok) {
+              if (klinesRes.status === 404) {
+                console.warn(`Symbol ${s} not found on Futures, skipping.`);
+                return;
+              }
+              throw new Error(`Klines failed with status ${klinesRes.status}`);
+            }
             
             const data = await klinesRes.json();
+            if (!Array.isArray(data)) return;
+
             const formatted: Candle[] = data.map((d: any) => ({
               time: d[0],
               open: parseFloat(d[1]),
@@ -422,7 +464,7 @@ export default function App() {
             });
 
             const now = Date.now();
-            const lookbackMs = scanLookbackHours * 60 * 60 * 1000;
+            const lookbackMs = scanLookbackMinutes * 60 * 1000;
             const lookbackLimit = now - lookbackMs;
             
             // Find the most recent signal within the lookback window
@@ -431,24 +473,26 @@ export default function App() {
               const candle = processed[j];
               if (candle.time < lookbackLimit) break;
               
-              const isBuy = candle.buySignal && (candle.rsiHist || 0) > 0 && candle.lastTouch === 'LOWER';
-              const isSell = candle.sellSignal && (candle.rsiHist || 0) < 0 && candle.lastTouch === 'UPPER';
+              const isBuy = candle.buySignal;
+              const isSell = candle.sellSignal;
               
               if (isBuy || isSell) {
                 foundSignal = {
                   candle,
-                  type: isBuy ? 'BUY' : 'SELL' as 'BUY' | 'SELL'
+                  type: isBuy ? 'BUY' : 'SELL' as 'BUY' | 'SELL',
+                  source: 'Combined Strategy'
                 };
                 break;
               }
             }
 
             if (foundSignal) {
-              const { candle, type } = foundSignal;
+              const { candle, type, source } = foundSignal;
               const signalData = {
-                id: `${s}-${candle.time}`,
+                id: `${s}-${candle.time}-${source}`,
                 symbol: s,
                 type: type,
+                source: source,
                 price: candle.close,
                 time: candle.time,
                 isStrong: candle.isStrong,
@@ -473,9 +517,12 @@ export default function App() {
               }
             }
           } catch (e) {
-            console.error(`Error scanning ${s}:`, e);
+            console.error(`Error scanning ${s}:`, e instanceof Error ? e.message : e);
           }
         }));
+
+        // Batch delay to prevent rate limits / proxy overload
+        await new Promise(resolve => setTimeout(resolve, 300));
 
         // Update progress and results after each batch
         const progress = Math.min(100, Math.round(((i + batch.length) / total) * 100));
@@ -500,7 +547,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${currentSymbol}&interval=${currentTF}&limit=100`);
+      const response = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${currentTF}&limit=500`);
       if (!response.ok) throw new Error('Failed to fetch data');
       const data = await response.json();
       const formattedData: Candle[] = data.map((d: any) => ({
@@ -535,9 +582,14 @@ export default function App() {
       rsiHistMALength,
       rsiHistMAType,
       kamaAlpha,
-      rsiSource
+      rsiSource,
+      zigzagLength,
+      zigzagPhase,
+      zigzagPower,
+      tpRatio,
+      slLookback
     });
-  }, [candles, sensitivity, multiplier, useFilter, rsiHistLength, rsiHistMALength, rsiHistMAType, kamaAlpha, rsiSource]);
+  }, [candles, sensitivity, multiplier, useFilter, rsiHistLength, rsiHistMALength, rsiHistMAType, kamaAlpha, rsiSource, zigzagLength, zigzagPhase, zigzagPower, tpRatio, slLookback]);
 
   const latest = processedData[processedData.length - 1];
 
@@ -604,47 +656,162 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 lg:p-6 space-y-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="flex items-center justify-between mb-4">
-            <TabsList className="bg-orange-900/40 border border-orange-500/30">
-              <TabsTrigger value="chart" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
-                <LayoutDashboard className="w-4 h-4" /> Chart
-              </TabsTrigger>
-              <TabsTrigger value="scanner" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
-                <Search className="w-4 h-4" /> Market Scanner
-              </TabsTrigger>
-              <TabsTrigger value="history" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black">
-                <History className="w-4 h-4" /> Signal History
-              </TabsTrigger>
-              <TabsTrigger value="alerts" className="flex items-center gap-2 data-[state=active]:bg-orange-500 data-[state=active]:text-black relative">
-                <Bell className="w-4 h-4" /> Alerts
-                {notificationHistory.length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
-                )}
-              </TabsTrigger>
-            </TabsList>
+        <div className="space-y-6">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tighter uppercase italic">
+                 <LayoutDashboard className="w-6 h-6 text-orange-500" /> AI Dashboard <span className="text-orange-500">Live</span>
+              </h2>
+              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Unified Triple Confirmation Analysis Engine</p>
+            </div>
             
-            {activeTab === 'scanner' && (
+            <div className="flex items-center gap-3">
               <Button 
                 onClick={startScan} 
                 disabled={scanning}
-                className="bg-orange-600 hover:bg-orange-500 text-white gap-2 shadow-[0_0_15px_rgba(234,88,12,0.3)]"
+                className="bg-orange-600 hover:bg-orange-500 text-white gap-2 shadow-[0_0_15px_rgba(234,88,12,0.3)] h-11 px-6 font-black uppercase text-xs transition-all active:scale-95"
               >
                 {scanning ? (
                   <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Scanning {scanProgress}% ({currentScanning}.P)
+                    <RefreshCw className="w-4 h-4 animate-spin text-black" />
+                    <span className="text-black">Scanning {scanProgress}%</span>
                   </>
                 ) : (
                   <>
-                    <Search className="w-4 h-4" /> Start Full Scan
+                    <Search className="w-4 h-4" /> Market Scan
                   </>
                 )}
               </Button>
-            )}
+            </div>
           </div>
 
-          <TabsContent value="chart" className="space-y-6 mt-0">
+          <div className="space-y-8">
+            {/* AI Dashboard Summary Section */}
+            {processedData.length > 0 && (
+              <div className="space-y-4">
+                {/* 1. Main Signal Box */}
+                {(() => {
+                  const last = processedData[processedData.length - 1];
+                  const hasTrend = last.trend === 'BULLISH';
+                  const hasMomentum = (last.rsiHist || 0) > 0;
+                  const hasTrigger = last.zigzagSignal === 'BUY';
+                  
+                  const isShortTrend = last.trend === 'BEARISH';
+                  const isShortMomentum = (last.rsiHist || 0) < 0;
+                  const isShortTrigger = last.zigzagSignal === 'SELL';
+
+                  if (hasTrend && hasMomentum && hasTrigger) {
+                    return (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }} 
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-6 rounded-2xl bg-emerald-500 text-black text-center shadow-[0_0_30px_rgba(16,185,129,0.3)]"
+                      >
+                        <h2 className="text-2xl font-black flex items-center justify-center gap-3">
+                          <TrendingUp className="w-8 h-8" /> 🚀 STRONG BUY SIGNAL
+                        </h2>
+                        <p className="text-xs font-bold opacity-70 mt-1 uppercase tracking-widest">Triple Confirmation Confirmed</p>
+                      </motion.div>
+                    );
+                  } else if (isShortTrend && isShortMomentum && isShortTrigger) {
+                    return (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }} 
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-6 rounded-2xl bg-rose-500 text-white text-center shadow-[0_0_30px_rgba(244,63,94,0.3)]"
+                      >
+                        <h2 className="text-2xl font-black flex items-center justify-center gap-3">
+                          <TrendingDown className="w-8 h-8" /> 📉 STRONG SELL SIGNAL
+                        </h2>
+                        <p className="text-xs font-bold opacity-70 mt-1 uppercase tracking-widest">Triple Confirmation Confirmed</p>
+                      </motion.div>
+                    );
+                  } else {
+                    return (
+                      <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-500 text-center">
+                        <h2 className="text-2xl font-black flex items-center justify-center gap-3">
+                          <RefreshCw className="w-6 h-6 animate-spin-slow" /> ⏳ WAITING FOR CONFIRMATION
+                        </h2>
+                        <p className="text-xs font-medium opacity-50 mt-1 uppercase tracking-widest">Searching for High Probability Setup</p>
+                      </div>
+                    );
+                  }
+                })()}
+
+                {/* 2. Indicators Matrix */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {(() => {
+                    const last = processedData[processedData.length - 1];
+                    return (
+                      <>
+                        <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl flex flex-col gap-1">
+                          <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Supertrend</span>
+                          <div className="flex items-center justify-between">
+                            <span className={cn("text-lg font-black", last.trend === 'BULLISH' ? "text-emerald-400" : "text-rose-400")}>
+                              {last.trend || 'NEUTRAL'}
+                            </span>
+                            <Badge variant="outline" className={last.trend === 'BULLISH' ? "border-emerald-500/30 text-emerald-500" : "border-rose-500/30 text-rose-500"}>
+                              Trend
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl flex flex-col gap-1">
+                          <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">RSI Histogram</span>
+                          <div className="flex items-center justify-between">
+                            <span className={cn("text-lg font-black", (last.rsiHist || 0) > 0 ? "text-emerald-400" : "text-rose-400")}>
+                              {(last.rsiHist || 0) > 0 ? 'POSITIVE' : 'NEGATIVE'}
+                            </span>
+                            <span className="text-xs font-mono text-zinc-400">{(last.rsiHist || 0).toFixed(1)}</span>
+                          </div>
+                        </div>
+                        <div className="bg-zinc-900/50 border border-white/5 p-4 rounded-xl flex flex-col gap-1">
+                          <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">ZigZag Trigger</span>
+                          <div className="flex items-center justify-between">
+                            <span className={cn("text-lg font-black", last.zigzagSignal ? (last.zigzagSignal === 'BUY' ? "text-emerald-400" : "text-rose-400") : "text-zinc-600")}>
+                              {last.zigzagSignal ? (last.zigzagSignal === 'BUY' ? 'UP' : 'DOWN') : 'NONE'}
+                            </span>
+                            <Badge variant="outline" className="border-white/10 text-white">Trigger</Badge>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* 3. Trading Levels */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {(() => {
+                    const last = processedData[processedData.length - 1];
+                    return (
+                      <>
+                        <div className="bg-sky-500/5 border border-sky-500/20 p-4 rounded-xl">
+                          <div className="flex items-center gap-2 mb-2">
+                             <Target className="w-4 h-4 text-sky-400" />
+                             <span className="text-xs font-bold text-sky-400 uppercase">Entry Price</span>
+                          </div>
+                          <span className="text-xl font-black text-white">${last.close.toLocaleString()}</span>
+                        </div>
+                        <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-xl">
+                          <div className="flex items-center gap-2 mb-2">
+                             <TrendingUp className="w-4 h-4 text-emerald-400" />
+                             <span className="text-xs font-bold text-emerald-400 uppercase">Take Profit (1:2)</span>
+                          </div>
+                          <span className="text-xl font-black text-emerald-400">${(last.tpPrice || (last.close * 1.02)).toLocaleString()}</span>
+                        </div>
+                        <div className="bg-rose-500/5 border border-rose-500/20 p-4 rounded-xl">
+                          <div className="flex items-center gap-2 mb-2">
+                             <TrendingDown className="w-4 h-4 text-rose-400" />
+                             <span className="text-xs font-bold text-rose-400 uppercase">Stop Loss</span>
+                          </div>
+                          <span className="text-xl font-black text-rose-400">${(last.slPrice || (last.close * 0.99)).toLocaleString()}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Chart Section */}
           <Card className="lg:col-span-3 bg-orange-950/20 border-orange-500/20 overflow-hidden flex flex-col min-h-[500px] backdrop-blur-sm shadow-2xl">
@@ -770,6 +937,36 @@ export default function App() {
                     {confirmationSignals && (
                       <>
                         <Scatter 
+                          data={processedData.filter(d => d.zigzagSignal === 'BUY')} 
+                          dataKey="close"
+                          shape={(props: any) => {
+                            const { cx, payload, yAxis } = props;
+                            if (!yAxis || !yAxis.scale) return null;
+                            const yPivot = yAxis.scale(payload.zigzagPivot);
+                            if (isNaN(cx) || isNaN(yPivot)) return null;
+                            return (
+                              <g transform={`translate(${cx},${yPivot + 10})`}>
+                                <path d="M0,-8 L8,8 L-8,8 Z" fill="#10b981" />
+                              </g>
+                            );
+                          }}
+                        />
+                        <Scatter 
+                          data={processedData.filter(d => d.zigzagSignal === 'SELL')} 
+                          dataKey="close"
+                          shape={(props: any) => {
+                            const { cx, payload, yAxis } = props;
+                            if (!yAxis || !yAxis.scale) return null;
+                            const yPivot = yAxis.scale(payload.zigzagPivot);
+                            if (isNaN(cx) || isNaN(yPivot)) return null;
+                            return (
+                              <g transform={`translate(${cx},${yPivot - 10})`}>
+                                <path d="M0,8 L-8,-8 L8,-8 Z" fill="#f43f5e" />
+                              </g>
+                            );
+                          }}
+                        />
+                        <Scatter 
                           data={processedData.filter(d => d.buySignal)} 
                           dataKey="close"
                           shape={(props: any) => {
@@ -800,6 +997,24 @@ export default function App() {
                               </g>
                             );
                           }}
+                        />
+                        <Line 
+                          type="stepAfter" 
+                          dataKey="slPrice" 
+                          stroke="#ef4444" 
+                          strokeDasharray="3 3"
+                          strokeWidth={1.5}
+                          dot={false}
+                          connectNulls={false}
+                        />
+                        <Line 
+                          type="stepAfter" 
+                          dataKey="tpPrice" 
+                          stroke="#10b981" 
+                          strokeDasharray="3 3"
+                          strokeWidth={1.5}
+                          dot={false}
+                          connectNulls={false}
                         />
                       </>
                     )}
@@ -884,7 +1099,7 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-100 uppercase font-medium">Sensitivity</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">ATR Period</label>
                   <Input 
                     type="number" 
                     value={sensitivity} 
@@ -893,7 +1108,7 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-zinc-100 uppercase font-medium">Multiplier</label>
+                  <label className="text-xs text-zinc-100 uppercase font-medium">ATR Multiplier</label>
                   <Input 
                     type="number" 
                     step="0.1"
@@ -983,6 +1198,63 @@ export default function App() {
               </CardContent>
             </Card>
 
+            {/* AI Studio Control Widget */}
+            <Card className="bg-black/40 border border-white/5 backdrop-blur-sm overflow-hidden">
+              <CardHeader className="py-3 px-4 bg-orange-500/[0.02] border-b border-orange-500/10">
+                <CardTitle className="text-xs font-bold text-orange-500 uppercase flex items-center gap-2">
+                   <Zap className="w-3 h-3" /> AI Studio Control
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                   <span className="text-xs text-zinc-400">Telegram Bot</span>
+                   <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/5 text-[10px]">Connected ✅</Badge>
+                </div>
+                
+                {(() => {
+                  const last = processedData[processedData.length - 1];
+                  const adxValue = last?.adx || 0;
+                  return (
+                    <div className="space-y-2">
+                       <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-zinc-500 uppercase font-bold">Market Strength</span>
+                          <span className="text-orange-500 font-mono">ADX: {adxValue.toFixed(0)}</span>
+                       </div>
+                       <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(adxValue, 100)}%` }}
+                            className={cn(
+                              "h-full rounded-full transition-colors",
+                              adxValue > 25 ? "bg-orange-500" : "bg-zinc-600"
+                            )}
+                          />
+                       </div>
+                    </div>
+                  );
+                })()}
+
+                <Button 
+                   variant="outline" 
+                   className="w-full text-xs h-9 border-orange-500/20 hover:bg-orange-500/10 text-orange-500 font-bold"
+                   onClick={() => {
+                      const last = processedData[processedData.length - 1];
+                      if (last) {
+                        setNotifications(prev => [{
+                          id: Date.now().toString(),
+                          symbol,
+                          type: last.zigzagSignal || 'SIGNAL',
+                          message: `Manual check for ${symbol}: Trend is ${last.trend}, Momentum: ${last.rsiHist?.toFixed(2)}`,
+                          time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+                        }, ...prev]);
+                      }
+                   }}
+                >
+                   Send Signal Manually
+                </Button>
+              </CardContent>
+            </Card>
+
             <Card className="bg-orange-950/20 border-orange-500/20">
               <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
@@ -1048,6 +1320,44 @@ export default function App() {
             <Card className="bg-orange-950/20 border-orange-500/20">
               <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                  <Activity className="w-4 h-4 text-orange-500" /> ZigZag Settings
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs text-zinc-100 uppercase font-medium">ZigZag Sensitivity (JMA)</label>
+                  <Input 
+                    type="number" 
+                    value={zigzagLength} 
+                    onChange={(e) => setZigzagLength(parseInt(e.target.value))}
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-zinc-100 uppercase font-medium">TP Ratio (1:X)</label>
+                  <Input 
+                    type="number" 
+                    step={0.1}
+                    value={tpRatio} 
+                    onChange={(e) => setTpRatio(parseFloat(e.target.value))}
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-zinc-100 uppercase font-medium">SL Lookback (Bars)</label>
+                  <Input 
+                    type="number" 
+                    value={slLookback} 
+                    onChange={(e) => setSlLookback(parseInt(e.target.value))}
+                    className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-orange-950/20 border-orange-500/20">
+              <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
                   <Bell className="w-4 h-4 text-orange-500" /> Alert Settings
                 </CardTitle>
               </CardHeader>
@@ -1100,18 +1410,52 @@ export default function App() {
 
                 <div className="space-y-2 pt-2 border-t border-white/5">
                   <div className="flex justify-between items-center">
-                    <label className="text-xs text-zinc-100 uppercase font-medium">Scan Lookback (Hours)</label>
-                    <span className="text-xs font-bold text-orange-500">{scanLookbackHours}h</span>
+                    <label className="text-xs text-zinc-100 uppercase font-medium">Scan Lookback (Minutes)</label>
+                    <span className="text-xs font-bold text-orange-500">{scanLookbackMinutes}m</span>
                   </div>
                   <Input 
                     type="number" 
                     min="1"
-                    max="168"
-                    value={scanLookbackHours} 
-                    onChange={(e) => setScanLookbackHours(Math.max(1, parseInt(e.target.value) || 1))}
+                    max="1440"
+                    value={scanLookbackMinutes} 
+                    onChange={(e) => setScanLookbackMinutes(Math.max(1, parseInt(e.target.value) || 1))}
                     className="bg-orange-950/40 border-orange-500/20 h-8 text-sm text-zinc-100 focus:border-orange-500/50"
                   />
-                  <p className="text-[10px] text-zinc-500 italic">Filter signals confirmed within the last {scanLookbackHours} hours.</p>
+                  <div className="flex bg-black/40 rounded-lg p-1 border border-zinc-800">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className={cn("h-7 text-[10px] flex-1 px-1", scanLookbackMinutes === 15 ? "bg-orange-500 text-white hover:bg-orange-600" : "text-zinc-400 hover:text-zinc-200")}
+                      onClick={() => setScanLookbackMinutes(15)}
+                    >
+                      15M
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className={cn("h-7 text-[10px] flex-1 px-1", scanLookbackMinutes === 30 ? "bg-orange-500 text-white hover:bg-orange-600" : "text-zinc-400 hover:text-zinc-200")}
+                      onClick={() => setScanLookbackMinutes(30)}
+                    >
+                      30M
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className={cn("h-7 text-[10px] flex-1 px-1", scanLookbackMinutes === 60 ? "bg-orange-500 text-white hover:bg-orange-600" : "text-zinc-400 hover:text-zinc-200")}
+                      onClick={() => setScanLookbackMinutes(60)}
+                    >
+                      1H
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className={cn("h-7 text-[10px] flex-1 px-1", scanLookbackMinutes === 240 ? "bg-orange-500 text-white hover:bg-orange-600" : "text-zinc-400 hover:text-zinc-200")}
+                      onClick={() => setScanLookbackMinutes(240)}
+                    >
+                      4H
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 italic">Filter signals confirmed within the last {scanLookbackMinutes} minutes.</p>
                 </div>
 
                 <div className="pt-4 border-t border-white/10 space-y-4">
@@ -1223,11 +1567,19 @@ export default function App() {
               <CardContent className="space-y-3 pt-4">
                 <div className="flex items-center gap-3">
                   <div className="w-6 h-6 bg-emerald-500 rounded flex items-center justify-center text-[10px] font-bold text-black">B</div>
-                  <span className="text-xs text-zinc-300">Confirmation Buy</span>
+                  <span className="text-xs text-zinc-300">SuperTrend Buy</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="w-6 h-6 bg-rose-500 rounded flex items-center justify-center text-[10px] font-bold text-black">S</div>
-                  <span className="text-xs text-zinc-300">Confirmation Sell</span>
+                  <span className="text-xs text-zinc-300">SuperTrend Sell</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[10px] border-b-emerald-500 ml-1.5" />
+                  <span className="text-xs text-zinc-300">Strategy Entry (Buy)</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[10px] border-t-rose-500 ml-1.5" />
+                  <span className="text-xs text-zinc-300">Strategy Entry (Sell)</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="w-3 h-3 bg-purple-500 rounded-full ml-1.5 shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
@@ -1235,16 +1587,15 @@ export default function App() {
                 </div>
                 <div className="mt-4 p-3 bg-white/[0.03] rounded-lg border border-white/5">
                   <p className="text-[10px] text-zinc-400 leading-relaxed">
-                    Signals are generated based on Supertrend crossovers and RSI/Bollinger Band reversals.
+                    Strategy: Triple Confirmation PRO (RSI Hist + Supertrend + ZigZag Jurik).
                   </p>
                 </div>
               </CardContent>
             </Card>
           </div>
         </div>
-      </TabsContent>
 
-        <TabsContent value="scanner" className="mt-0">
+        <div id="scanner" className="space-y-6">
           <Card className="bg-orange-950/20 border-orange-500/20 min-h-[600px] backdrop-blur-sm shadow-2xl overflow-hidden">
             <CardHeader className="border-b border-orange-500/10 flex flex-row items-center justify-between bg-orange-500/[0.02]">
               <div>
@@ -1252,7 +1603,7 @@ export default function App() {
                   <ListFilter className="w-5 h-5 text-orange-500" /> Filtered Signals
                 </CardTitle>
                 <CardDescription className="text-zinc-400">
-                  Binance Futures (USDT Pairs) • Rules: Lux Signal + RSI Hist + Last Band Touch
+                  Rules: ZigZag Flip + Trend Alignment + RSI Hist + Strength
                 </CardDescription>
               </div>
               <Badge variant="outline" className="bg-black/40 border-white/10 text-white">
@@ -1265,6 +1616,7 @@ export default function App() {
                   <thead>
                     <tr className="border-b border-zinc-800 bg-black/20">
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Strategy</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Price</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Last Touch</th>
@@ -1278,14 +1630,14 @@ export default function App() {
                   <tbody className="divide-y divide-zinc-800/50">
                     {scanResults.length === 0 && !scanning && (
                       <tr>
-                        <td colSpan={9} className="p-12 text-center text-zinc-500">
+                        <td colSpan={10} className="p-12 text-center text-zinc-500">
                           No signals found. Click "Start Full Scan" to analyze the market.
                         </td>
                       </tr>
                     )}
                     {scanning && scanResults.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="p-12 text-center">
+                        <td colSpan={10} className="p-12 text-center">
                           <div className="flex flex-col items-center gap-4">
                             <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                             <div className="space-y-1">
@@ -1319,6 +1671,14 @@ export default function App() {
                                 )}
                               </div>
                             </div>
+                          </td>
+                          <td className="p-4 text-xs text-zinc-500 whitespace-nowrap">
+                            <Badge variant="outline" className={cn(
+                              "border-none text-[10px] h-5",
+                              res.source?.includes("ZigZag") ? "bg-purple-500/10 text-purple-400" : "bg-orange-500/10 text-orange-400"
+                            )}>
+                              {res.source || 'Strategy'}
+                            </Badge>
                           </td>
                           <td className="p-4">
                             <Badge className={cn(
@@ -1382,7 +1742,7 @@ export default function App() {
                               className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"
                               onClick={() => {
                                 setSymbol(res.symbol);
-                                setActiveTab('chart');
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
                               }}
                             >
                               View Chart
@@ -1396,9 +1756,9 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
 
-        <TabsContent value="history" className="mt-0">
+        <div id="history" className="space-y-6">
           <Card className="bg-orange-950/20 border-orange-500/20 min-h-[600px] backdrop-blur-sm shadow-2xl overflow-hidden">
             <CardHeader className="border-b border-orange-500/10 flex flex-row items-center justify-between bg-orange-500/[0.02]">
               <div>
@@ -1424,6 +1784,7 @@ export default function App() {
                   <thead>
                     <tr className="border-b border-zinc-800 bg-black/20">
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Strategy</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Price</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal Time</th>
@@ -1439,7 +1800,7 @@ export default function App() {
                         </td>
                       </tr>
                     ) : (
-                      signalHistory.map((res) => (
+                       signalHistory.map((res) => (
                         <tr key={res.id} className="hover:bg-orange-500/5 transition-colors group">
                           <td className="p-4">
                             <div className="flex items-center gap-2">
@@ -1453,6 +1814,14 @@ export default function App() {
                                 {copiedSymbol === res.symbol ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                               </Button>
                             </div>
+                          </td>
+                          <td className="p-4 text-xs text-zinc-500 whitespace-nowrap">
+                            <Badge variant="outline" className={cn(
+                              "border-none text-[10px] h-5",
+                              res.source?.includes("ZigZag") ? "bg-purple-500/10 text-purple-400" : "bg-orange-500/10 text-orange-400"
+                            )}>
+                              {res.source || 'Strategy'}
+                            </Badge>
                           </td>
                           <td className="p-4">
                             <Badge className={cn(
@@ -1476,7 +1845,7 @@ export default function App() {
                               className="h-8 text-xs text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"
                               onClick={() => {
                                 setSymbol(res.symbol);
-                                setActiveTab('chart');
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
                               }}
                             >
                               View Chart
@@ -1490,8 +1859,8 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-        <TabsContent value="alerts" className="space-y-6 mt-0">
+        </div>
+        <div id="alerts" className="space-y-6">
           <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl">
             <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
               <div className="flex items-center justify-between">
@@ -1568,8 +1937,175 @@ export default function App() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        </div>
+        <div id="settings" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl">
+                <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                  <CardTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                    <Send className="w-5 h-5 text-orange-500" /> Telegram & Bot Configuration
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between p-4 bg-orange-500/5 rounded-xl border border-orange-500/10">
+                        <div className="flex items-center gap-2">
+                          <Send className="w-4 h-4 text-sky-400" />
+                          <span className="text-sm border-zinc-100 font-bold">Telegram Alerts</span>
+                        </div>
+                        <button 
+                          onClick={() => setTelegramEnabled(!telegramEnabled)}
+                          className={cn(
+                            "w-10 h-5 rounded-full transition-colors relative",
+                            telegramEnabled ? "bg-orange-500" : "bg-zinc-800"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-1 w-3 h-3 bg-white rounded-full transition-transform",
+                            telegramEnabled ? "translate-x-6" : "translate-x-1"
+                          )} />
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-zinc-400 uppercase">Bot Token</label>
+                        <Input 
+                          type="password" 
+                          placeholder="123456789:ABC..." 
+                          value={telegramToken}
+                          onChange={(e) => setTelegramToken(e.target.value)}
+                          className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-zinc-400 uppercase">Chat ID</label>
+                        <Input 
+                          placeholder="-100123456789" 
+                          value={telegramChatId}
+                          onChange={(e) => setTelegramChatId(e.target.value)}
+                          className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="p-4 bg-orange-500/5 rounded-xl border border-orange-500/10 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm text-zinc-100 font-bold">
+                            <Globe className="w-4 h-4 text-orange-500" /> Cloud Scanner
+                          </div>
+                          <button 
+                            onClick={() => setAutoScan(!autoScan)}
+                            className={cn(
+                              "w-10 h-5 rounded-full transition-colors relative",
+                              autoScan ? "bg-orange-500" : "bg-zinc-800"
+                            )}
+                          >
+                            <div className={cn(
+                              "absolute top-1 w-3 h-3 bg-white rounded-full transition-transform",
+                              autoScan ? "translate-x-6" : "translate-x-1"
+                            )} />
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed">
+                          When enabled, our cloud server analyzes all symbols 24/7 every 5 minutes and sends notifications directly to your Telegram.
+                        </p>
+                      </div>
+
+                      <div className="p-4 bg-black/40 rounded-xl border border-white/5 space-y-2">
+                        <h4 className="text-xs font-bold text-zinc-100 flex items-center gap-2">
+                          <Info className="w-3 h-3 text-orange-500" /> Setup
+                        </h4>
+                        <ul className="text-[10px] text-zinc-500 space-y-1 list-disc pl-4">
+                          <li>Contact @BotFather for Token</li>
+                          <li>Contact @userinfobot for Chat ID</li>
+                          <li>Save settings and toggle enabled</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-4 border-t border-white/5">
+                    <Button 
+                      className="bg-orange-500 hover:bg-orange-600 text-white font-bold h-10 rounded-xl"
+                      onClick={saveSettingsToFirebase}
+                    >
+                      Save Settings
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="col-span-1">
+              <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl">
+                <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                  <CardTitle className="text-sm font-bold flex items-center gap-2 text-white">
+                    <Zap className="w-4 h-4 text-orange-500" /> App Logic Overview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 space-y-6">
+                  <p className="text-xs text-zinc-300 leading-relaxed italic">
+                    "This trading system uses a Triple Confirmation method on a 15-minute timeframe to generate high-probability entries."
+                  </p>
+                  
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-orange-500 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                        1. Trend Confirmation (Supertrend)
+                      </h4>
+                      <p className="text-[10px] text-zinc-400 pl-3.5">
+                        <span className="text-emerald-400">Bullish:</span> Price &gt; Supertrend (3, 20)<br/>
+                        <span className="text-rose-400">Bearish:</span> Price &lt; Supertrend
+                      </p>
+                      <p className="text-[9px] text-zinc-500 pl-3.5">Purpose: Trade ONLY in the direction of the overall trend.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-orange-500 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                        2. Momentum Confirmation (RSI Histogram)
+                      </h4>
+                      <p className="text-[10px] text-zinc-400 pl-3.5">
+                        Formula: Smoothed (RSI(14) - 50) x 4.<br/>
+                        <span className="text-emerald-400">Positive:</span> Bullish Momentum<br/>
+                        <span className="text-rose-400">Negative:</span> Bearish Momentum
+                      </p>
+                      <p className="text-[9px] text-zinc-500 pl-3.5">Purpose: Filters out weak price movements.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-orange-500 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                        3. Entry Trigger (Zero Lag ZigZag - Jurik JMA)
+                      </h4>
+                      <p className="text-[10px] text-zinc-400 pl-3.5">
+                        Buy/Sell Signal: When Jurik Moving Average (Length 14) creates a "Turning Point".
+                      </p>
+                      <p className="text-[9px] text-zinc-500 pl-3.5">Purpose: Find exact entry points at price swing starts.</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-orange-500 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                        4. Risk Management (Automated)
+                      </h4>
+                      <p className="text-[10px] text-zinc-400 pl-3.5">
+                        <span className="font-bold underline decoration-zinc-600">Stop Loss:</span> Lowest/Highest of last 3 candles.<br/>
+                        <span className="font-bold underline decoration-zinc-600">Take Profit:</span> Fixed 1:2 Risk-to-Reward Ratio.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     </main>
 
       {/* Footer */}

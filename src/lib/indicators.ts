@@ -23,6 +23,11 @@ export interface IndicatorResult {
   sellSignal: boolean;
   contraBuy: boolean;
   contraSell: boolean;
+  trend: string;
+  zigzagPivot: number | null;
+  zigzagSignal: 'BUY' | 'SELL' | null;
+  slPrice: number | null;
+  tpPrice: number | null;
 }
 
 export function calculateSMA(data: number[], period: number): (number | null)[] {
@@ -319,42 +324,56 @@ export function calculateKAMA(data: number[], period: number, fastAlphaParam: nu
   return kama;
 }
 
-export function calculateJMA(data: number[], length: number): (number | null)[] {
+export function calculateJMA(data: number[], length: number, phase: number = 50, power: number = 1): (number | null)[] {
   const jma: (number | null)[] = new Array(data.length).fill(null);
-  const beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2);
-  const alpha = beta;
   
-  let tmp0 = 0, tmp1 = 0, tmp2 = 0, tmp3 = 0, tmp4 = 0;
-  let prevTmp0 = 0, prevTmp1 = 0, prevTmp3 = 0, prevTmp4 = 0;
+  const phaseRatio = phase < -100 ? 0.5 : phase > 100 ? 2.5 : phase / 100 + 1.5;
+  const beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2);
+  const alpha = Math.pow(beta, power);
+  
+  let e0 = 0, e1 = 0, e2 = 0, jmaValue = 0;
+  let prevE0 = 0, prevE1 = 0, prevE2 = 0, prevJma = 0;
 
   for (let i = 0; i < data.length; i++) {
     const src = data[i];
-    tmp0 = (1 - alpha) * src + alpha * prevTmp0;
-    tmp1 = (src - tmp0) * (1 - beta) + beta * prevTmp1;
-    tmp2 = tmp0 + tmp1;
-    tmp3 = (tmp2 - prevTmp4) * ((1 - alpha) * (1 - alpha)) + (alpha * alpha) * prevTmp3;
-    tmp4 = prevTmp4 + tmp3;
     
-    jma[i] = tmp4;
+    // e0 := (1 - alpha) * src + alpha * nz(e0[1])
+    e0 = (1 - alpha) * src + alpha * prevE0;
     
-    prevTmp0 = tmp0;
-    prevTmp1 = tmp1;
-    prevTmp3 = tmp3;
-    prevTmp4 = tmp4;
+    // e1 := (src - e0) * (1 - beta) + beta * nz(e1[1])
+    e1 = (src - e0) * (1 - beta) + beta * prevE1;
+    
+    // e2 := (e0 + phaseRatio * e1 - nz(jma[1])) * pow(1 - alpha, 2) + pow(alpha, 2) * nz(e2[1])
+    e2 = (e0 + phaseRatio * e1 - prevJma) * Math.pow(1 - alpha, 2) + Math.pow(alpha, 2) * prevE2;
+    
+    // jma := e2 + nz(jma[1])
+    jmaValue = e2 + prevJma;
+    
+    jma[i] = jmaValue;
+    
+    prevE0 = e0;
+    prevE1 = e1;
+    prevE2 = e2;
+    prevJma = jmaValue;
   }
   
   return jma;
 }
 
 export function processIndicators(candles: Candle[], settings: { 
-  sensitivity: number, 
-  multiplier: number, 
+  sensitivity: number, // ATR Length (Trend)
+  multiplier: number,  // ATR Multiplier (Trend)
   useFilter: boolean,
   rsiHistLength: number,
   rsiHistMALength: number,
   rsiHistMAType: string,
   kamaAlpha?: number,
-  rsiSource?: 'CLOSE' | 'HL2'
+  rsiSource?: 'CLOSE' | 'HL2',
+  zigzagLength?: number,
+  zigzagPhase?: number,
+  zigzagPower?: number,
+  tpRatio?: number,
+  slLookback?: number
 }) {
   if (!candles || candles.length === 0) return [];
 
@@ -362,33 +381,53 @@ export function processIndicators(candles: Candle[], settings: {
   const high = candles.map(c => c.high);
   const low = candles.map(c => c.low);
   const hl2 = candles.map(c => (c.high + c.low) / 2);
+  const ohlc4 = candles.map(c => (c.open + c.high + c.low + c.close) / 4);
   
   const rsiSourceData = settings.rsiSource === 'CLOSE' ? close : hl2;
 
+  // 1. RSI Histo Logic (Double Jurik-style Smoothing from Pine)
+  const rsiRaw = calculateRSI(rsiSourceData, settings.rsiHistLength).map(v => 
+    v !== null ? (v - 50) * 4 : 0
+  );
+  
+  const rsi_ma_len = settings.rsiHistMALength;
+  const beta_rsi = 0.45 * (rsi_ma_len - 1) / (0.45 * (rsi_ma_len - 1) + 2);
+  
+  const rsiHistMA: number[] = [];
+  let tmp0_rsi = 0;
+  let tmp1_rsi = 0;
+  
+  for (let i = 0; i < rsiRaw.length; i++) {
+    const val = rsiRaw[i];
+    tmp0_rsi = (1 - beta_rsi) * val + beta_rsi * tmp0_rsi;
+    tmp1_rsi = (val - tmp0_rsi) * (1 - beta_rsi) + beta_rsi * tmp1_rsi;
+    rsiHistMA.push(tmp0_rsi + tmp1_rsi);
+  }
+
+  // 2. Trend & Strength (Supertrend + ADX)
   const { superTrend, direction } = calculateSupertrend(high, low, close, settings.sensitivity, settings.multiplier);
+  const adx = calculateADX(high, low, close, 14);
+
+  // 3. ZigZag (Jurik) Logic
+  const jma_price = calculateJMA(
+    ohlc4, 
+    settings.zigzagLength || 14, 
+    settings.zigzagPhase || 50, 
+    settings.zigzagPower || 2
+  );
+
   const sma20 = calculateSMA(close, 20);
   const dev20 = calculateStdev(close, 20);
   const rsi = calculateRSI(close, 14);
-  const adx = calculateADX(high, low, close, 14);
-
-  // RSI Histogram Calculation
-  const rsiHistRaw = calculateRSI(rsiSourceData, settings.rsiHistLength).map(v => v !== null ? Math.min(100, Math.max(-100, (v - 50) * 4)) : 0);
-  
-  let rsiHistMA: (number | null)[] = [];
-  switch (settings.rsiHistMAType) {
-    case 'SMA': rsiHistMA = calculateSMA(rsiHistRaw, settings.rsiHistMALength); break;
-    case 'EMA': rsiHistMA = calculateEMA(rsiHistRaw, settings.rsiHistMALength); break;
-    case 'WMA': rsiHistMA = calculateWMA(rsiHistRaw, settings.rsiHistMALength); break;
-    case 'HMA': rsiHistMA = calculateHMA(rsiHistRaw, settings.rsiHistMALength); break;
-    case 'JMA': rsiHistMA = calculateJMA(rsiHistRaw, settings.rsiHistMALength); break;
-    case 'KAMA': rsiHistMA = calculateKAMA(rsiHistRaw, settings.rsiHistMALength, settings.kamaAlpha || 3); break;
-    default: rsiHistMA = rsiHistRaw;
-  }
 
   let prevHaOpen = (candles[0].open + candles[0].close) / 2;
   let prevHaClose = (candles[0].open + candles[0].high + candles[0].low + candles[0].close) / 4;
   let lastTouchState: string | null = null;
   let lastTouchTime: number | null = null;
+
+  let currentSlPrice: number | null = null;
+  let currentTpPrice: number | null = null;
+  let position: 'LONG' | 'SHORT' | null = null;
 
   return candles.map((candle, i) => {
     // Heikin Ashi Calculation
@@ -416,8 +455,75 @@ export function processIndicators(candles: Candle[], settings: {
     const currentADX = adx[i];
     const rsiHistValue = rsiHistMA[i];
 
-    const isStrong = currentADX !== null && currentADX > 25;
+    // Jurik ZigZag Signal
+    // ta.falling(jma_price[1], 1) and not ta.falling(jma_price, 1) -> Flip UP
+    // ta.rising(jma_price[1], 1) and not ta.rising(jma_price, 1) -> Flip DOWN
+    let zigzagSignal: 'BUY' | 'SELL' | null = null;
+    let zigzagPivot: number | null = null;
     
+    if (i > 1) {
+      const p = jma_price[i];
+      const p1 = jma_price[i - 1];
+      const p2 = jma_price[i - 2];
+      
+      if (p !== null && p1 !== null && p2 !== null) {
+        const wasFalling = p1 < p2;
+        const isNotFalling = p >= p1;
+        const zigzagUp = wasFalling && isNotFalling;
+
+        const wasRising = p1 > p2;
+        const isNotRising = p <= p1;
+        const zigzagDown = wasRising && isNotRising;
+
+        if (zigzagUp) {
+          zigzagSignal = 'BUY';
+          // Nearest low
+          zigzagPivot = Math.min(...low.slice(Math.max(0, i-2), i+1));
+        } else if (zigzagDown) {
+          zigzagSignal = 'SELL';
+          // Nearest high
+          zigzagPivot = Math.max(...high.slice(Math.max(0, i-2), i+1));
+        }
+      }
+    }
+
+    const isStrong = currentADX !== null && currentADX > 25;
+    const isBullishTrend = dir === -1;
+    const isBearishTrend = dir === 1;
+
+    // Entry Logic: zigzag_up and trend_bullish and rsi_histo_smooth > 0 and isStrong
+    const buySignal = zigzagSignal === 'BUY' && isBullishTrend && rsiHistValue > 0 && isStrong;
+    const sellSignal = zigzagSignal === 'SELL' && isBearishTrend && rsiHistValue < 0 && isStrong;
+
+    // SL/TP Logic
+    const slLookback = settings.slLookback || 3;
+    const tpRatio = settings.tpRatio || 2.0;
+
+    if (buySignal && position !== 'LONG') {
+      position = 'LONG';
+      const lookbackLow = Math.min(...low.slice(Math.max(0, i - slLookback + 1), i + 1));
+      currentSlPrice = lookbackLow;
+      const risk = candle.close - currentSlPrice;
+      currentTpPrice = candle.close + (risk * tpRatio);
+    } else if (sellSignal && position !== 'SHORT') {
+      position = 'SHORT';
+      const lookbackHigh = Math.max(...high.slice(Math.max(0, i - slLookback + 1), i + 1));
+      currentSlPrice = lookbackHigh;
+      const risk = currentSlPrice - candle.close;
+      currentTpPrice = candle.close - (risk * tpRatio);
+    }
+
+    // Check Exits
+    if (position === 'LONG') {
+      if (candle.low <= (currentSlPrice || 0) || candle.high >= (currentTpPrice || 0)) {
+        position = null;
+      }
+    } else if (position === 'SHORT') {
+      if (candle.high >= (currentSlPrice || 0) || candle.low <= (currentTpPrice || 0)) {
+        position = null;
+      }
+    }
+
     // Track Last Touched Band
     if (upperZone !== null && candle.high >= upperZone) {
       lastTouchState = 'UPPER';
@@ -427,18 +533,8 @@ export function processIndicators(candles: Candle[], settings: {
       lastTouchTime = candle.time;
     }
 
-    // Signal Logic
-    const prevST = superTrend[i - 1];
-    const prevClose = candles[i - 1]?.close;
-    
-    const signalBuy = st !== null && prevST !== null && prevClose !== null && prevClose <= prevST && candle.close > st;
-    const signalSell = st !== null && prevST !== null && prevClose !== null && prevClose >= prevST && candle.close < st;
-
     const contraBuy = lowerZone !== null && currentRSI !== null && candle.low <= lowerZone && currentRSI < 30;
     const contraSell = upperZone !== null && currentRSI !== null && candle.high >= upperZone && currentRSI > 70;
-
-    const validBuy = settings.useFilter ? (signalBuy && currentADX !== null && currentADX > 20) : signalBuy;
-    const validSell = settings.useFilter ? (signalSell && currentADX !== null && currentADX > 20) : signalSell;
 
     return {
       ...candle,
@@ -456,11 +552,15 @@ export function processIndicators(candles: Candle[], settings: {
       lastTouch: lastTouchState,
       lastTouchTime: lastTouchTime,
       isStrong,
-      buySignal: validBuy,
-      sellSignal: validSell,
+      buySignal,
+      sellSignal,
       contraBuy,
       contraSell,
-      trend: dir === -1 ? 'BULLISH' : 'BEARISH'
+      trend: dir === -1 ? 'BULLISH' : 'BEARISH',
+      zigzagPivot,
+      zigzagSignal,
+      slPrice: position ? currentSlPrice : null,
+      tpPrice: position ? currentTpPrice : null
     };
   });
 }

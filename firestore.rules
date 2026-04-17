@@ -2,7 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // ===============================================================
     // Helper Functions
+    // ===============================================================
+    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -11,24 +14,65 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' || 
+         (request.auth.token.email == "www.pathum.log@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
     function isValidUserSettings(data) {
-      return data.keys().hasAll(['uid']) &&
-             data.uid == request.auth.uid;
+      return data.uid is string && data.uid == request.auth.uid &&
+             (data.telegramEnabled == null || data.telegramEnabled is bool) &&
+             (data.telegramToken == null || (data.telegramToken is string && data.telegramToken.size() < 100)) &&
+             (data.telegramChatId == null || (data.telegramChatId is string && data.telegramChatId.size() < 50)) &&
+             (data.autoScan == null || data.autoScan is bool);
     }
 
     function isValidAlert(data) {
-      return data.keys().hasAll(['id', 'uid']) &&
-             data.uid == request.auth.uid;
+      return data.id is string && data.id.size() < 200 &&
+             data.uid is string && data.uid == request.auth.uid &&
+             data.symbol is string &&
+             data.type is string &&
+             data.timestamp is number;
     }
 
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
     match /settings/{uid} {
-      allow read: if isOwner(uid);
-      allow write: if isOwner(uid) && isValidUserSettings(request.resource.data);
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid) && isValidUserSettings(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /alerts/{alertId} {
-      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid);
-      allow write: if isAuthenticated() && (request.resource.data.uid == request.auth.uid);
+      // The scanner uses Admin SDK which bypasses these rules.
+      // Users can only read their own alerts.
+      allow read: if isOwner(resource.data.uid) || isAdmin();
+      allow create: if isOwner(request.resource.data.uid) && isValidAlert(request.resource.data);
+      allow update: if isOwner(resource.data.uid) && isValidAlert(request.resource.data) &&
+                      request.resource.data.id == resource.data.id;
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && 
+                            // Prevent self-promotion to admin
+                            (request.resource.data.role == (resource == null ? 'user' : resource.data.role) || isAdmin());
     }
   }
 }
