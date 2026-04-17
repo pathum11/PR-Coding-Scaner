@@ -40,17 +40,28 @@ async function startServer() {
   
   const runScanner = async () => {
     try {
-      console.log(`Scanner: Fetching users with autoScan enabled using Admin SDK...`);
+      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Fetching users with autoScan enabled...`);
       const usersSnap = await adminDb.collection("settings").where("autoScan", "==", true).get();
-      console.log(`Scanner: Found ${usersSnap.size} users with autoScan enabled.`);
       
+      if (usersSnap.empty) {
+        return;
+      }
+
       for (const userDoc of usersSnap.docs) {
         const settings = userDoc.data();
         if (!settings.telegramEnabled || !settings.telegramToken || !settings.telegramChatId) continue;
 
         for (const symbol of SYMBOLS) {
           try {
-            const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=100`);
+            // Use fapi (Futures) consistent with the frontend
+            const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`;
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+              console.error(`Scanner: Failed to fetch ${symbol} from Binance Futures API`);
+              continue;
+            }
+
             const data = await response.json();
             const candles = data.map((d: any) => ({
               time: d[0],
@@ -77,10 +88,15 @@ async function startServer() {
               slLookback: settings.slLookback || 3
             });
 
-            const last = results[results.length - 1];
+            // We check the LAST COMPLETED candle (index results.length - 2) 
+            // and the CURRENT candle (index results.length - 1)
+            // Most traders alert on the CLOSED candle to avoid repainting
+            const last = results[results.length - 2]; 
             
+            if (!last) continue;
+
             let signalType = "";
-            let signalSource = "Combined Strategy";
+            let signalSource = "Triple Confirmation Strategy";
             
             if (last.buySignal) {
               signalType = "BUY";
@@ -89,13 +105,24 @@ async function startServer() {
             }
 
             if (signalType) {
+              // Unique ID per signal per candle per user
               const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalSource.replace(/\s+/g, '')}`;
               const alertRef = adminDb.collection("alerts").doc(alertId);
               const alertSnap = await alertRef.get();
 
               if (!alertSnap.exists) {
-                // Send Telegram
-                const message = `🚀 <b>Server Alert: ${symbol}.P</b>\nType: ${signalType}\nSource: ${signalSource}\nTime: ${new Date(last.time).toLocaleTimeString()}\nSignal confirmed by 24/7 Scanner.`;
+                console.log(`Scanner: Triggering ${signalType} alert for ${symbol} @ ${userDoc.id}`);
+                
+                const emoji = signalType === "BUY" ? "🚀" : "📉";
+                const color = signalType === "BUY" ? "Bullish (BUY)" : "Bearish (SELL)";
+                
+                const message = `${emoji} <b>ALGO ALERT: ${symbol}.P</b>\n\n` +
+                                `<b>Type:</b> ${color}\n` +
+                                `<b>Trend:</b> ${last.trend}\n` +
+                                `<b>ADX:</b> ${last.adx?.toFixed(2)} (Strong Market)\n` +
+                                `<b>Price:</b> ${last.close}\n` +
+                                `<b>Time:</b> ${new Date(last.time).toLocaleString()}\n\n` +
+                                `📊 <i>Signal confirmed by Cloud Scanner (24/7).</i>`;
                 
                 await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
                   method: "POST",
@@ -107,13 +134,14 @@ async function startServer() {
                   })
                 });
 
-                // Mark as triggered
                 await alertRef.set({
                   id: alertId,
                   symbol,
                   type: signalType,
                   timestamp: Date.now(),
-                  uid: userDoc.id
+                  uid: userDoc.id,
+                  price: last.close,
+                  time: last.time
                 });
               }
             }
@@ -218,8 +246,8 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     
-    // Run scanner every 5 minutes
-    setInterval(runScanner, 5 * 60 * 1000);
+    // Run scanner every 1 minute for prompt alerts
+    setInterval(runScanner, 1 * 60 * 1000);
     // Run once on start
     runScanner();
   });

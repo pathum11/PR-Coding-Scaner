@@ -263,6 +263,29 @@ export default function App() {
     }
   };
 
+  const testTelegram = async () => {
+    if (!telegramToken || !telegramChatId) {
+      setError('Please enter both Token and Chat ID to test.');
+      return;
+    }
+    setScanning(true);
+    try {
+      await sendTelegramMessage('🔔 <b>Connection Test</b>\n\nYour 24/7 Cloud Scanner is successfully connected to this Telegram chat.\n\n✅ <i>Ready for automated signals.</i>');
+      // Show success notification instead of alert/toast for cleaner UI
+      setNotifications(prev => [{
+        id: Date.now(),
+        symbol: 'SYS',
+        type: 'INFO',
+        message: 'Telegram test message sent!',
+        time: Date.now()
+      }, ...prev]);
+    } catch (e) {
+      setError('Failed to send test message. Check your token and chat ID.');
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
       alert('Browser notifications are not supported in this browser.');
@@ -2010,7 +2033,7 @@ export default function App() {
                           </button>
                         </div>
                         <p className="text-[10px] text-zinc-400 leading-relaxed">
-                          When enabled, our cloud server analyzes all symbols 24/7 every 5 minutes and sends notifications directly to your Telegram.
+                          When enabled, our cloud server analyzes all symbols 24/7 every 1 minute and sends notifications directly to your Telegram.
                         </p>
                       </div>
 
@@ -2027,9 +2050,17 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="flex justify-end pt-4 border-t border-white/5">
+                  <div className="flex justify-between items-center pt-4 border-t border-white/5">
                     <Button 
-                      className="bg-orange-500 hover:bg-orange-600 text-white font-bold h-10 rounded-xl"
+                      variant="outline"
+                      className="border-zinc-800 hover:bg-zinc-800 text-zinc-400 h-10 rounded-xl"
+                      onClick={testTelegram}
+                      disabled={scanning}
+                    >
+                      {scanning ? 'Testing...' : 'Test Connection'}
+                    </Button>
+                    <Button 
+                      className="bg-orange-500 hover:bg-orange-600 text-white font-bold h-10 rounded-xl px-8"
                       onClick={saveSettingsToFirebase}
                     >
                       Save Settings
