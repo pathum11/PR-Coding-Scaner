@@ -77,18 +77,23 @@ async function startServer() {
       const endpoints = [
         'https://fapi.binance.com',
         'https://fapi1.binance.com',
-        'https://fapi2.binance.com'
+        'https://fapi2.binance.com',
+        'https://fapi3.binance.com'
       ];
       
       let exchangeData: any = null;
       for (const base of endpoints) {
         try {
-          const exchangeRes = await fetch(`${base}/fapi/v1/exchangeInfo`);
+          const exchangeRes = await fetch(`${base}/fapi/v1/exchangeInfo`, {
+            headers: { 'User-Agent': 'MarketPulse-Scanner-Background' }
+          });
           if (exchangeRes.ok) {
             exchangeData = await exchangeRes.json();
             break;
           }
-        } catch (e) {}
+        } catch (e) {
+          console.warn(`Background Scanner: exchangeInfo failed via ${base}`);
+        }
       }
 
       if (!exchangeData) {
@@ -100,8 +105,6 @@ async function startServer() {
         .filter((s: any) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
         .map((s: any) => s.symbol);
 
-      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started for ${allSymbols.length} symbols.`);
-      
       // 2. Fetch active users
       let usersSnap;
       try {
@@ -110,99 +113,130 @@ async function startServer() {
         console.error("Scanner: Firestore Fetch Failed:", innerError);
         return;
       }
+
+      const activeUsers = usersSnap.docs.filter((doc: any) => {
+        const data = doc.data();
+        return data.autoScan === true && data.telegramEnabled === true && data.telegramToken && data.telegramChatId;
+      });
+      const activeUsersCount = activeUsers.length;
+      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started for ${allSymbols.length} symbols. Active Users: ${activeUsersCount}`);
       
-      const activeUsers = usersSnap.docs.filter((doc: any) => doc.data().autoScan === true && doc.data().telegramEnabled === true);
-      if (activeUsers.length === 0) {
-        console.log("Scanner: No active users with autoScan and Telegram enabled.");
-        return;
-      }
+      if (activeUsersCount === 0) return;
 
-      // 3. Process symbols in small batches to respect Binance limits and CPU
-      const batchSize = 5; // Smaller batches for background scanner
-      for (let i = 0; i < allSymbols.length; i += batchSize) {
-        const batch = allSymbols.slice(i, i + batchSize);
-        await Promise.all(batch.map(async (symbol) => {
-          try {
-            const data = await fetchWithRetry(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=15m&limit=100`);
-            
-            const candles = data.map((d: any) => ({
-              time: d[0],
-              open: parseFloat(d[1]),
-              high: parseFloat(d[2]),
-              low: parseFloat(d[3]),
-              close: parseFloat(d[4]),
-              volume: parseFloat(d[5])
-            }));
+      const timeframes = [...new Set(activeUsers.map(u => u.data().timeframe || '15m'))];
+      let totalSignalsFound = 0;
 
-            // For each user, check their specific indicator settings
-            for (const userDoc of activeUsers) {
-              const settings = userDoc.data();
-              if (!settings.telegramToken || !settings.telegramChatId) continue;
+      for (const tf of timeframes) {
+        console.log(`Scanner: Processing timeframe ${tf}...`);
+        
+        const usersInTf = activeUsers.filter(u => (u.data().timeframe || '15m') === tf);
+        
+        const batchSize = 10;
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const batch = allSymbols.slice(i, i + batchSize);
+          await Promise.all(batch.map(async (symbol) => {
+            try {
+              let data: any = null;
+              for (const base of endpoints) {
+                try {
+                  data = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${tf}&limit=500`);
+                  if (data && Array.isArray(data)) break;
+                } catch (e) {}
+              }
 
-              const results = processIndicators(candles, {
-                sensitivity: settings.sensitivity || 20,
-                multiplier: settings.multiplier || 3.0,
-                useFilter: settings.useFilter || false,
-                rsiHistLength: settings.rsiHistLength || 14,
-                rsiHistMALength: settings.rsiHistMALength || 14,
-                rsiHistMAType: settings.rsiHistMAType || 'JMA',
-                zigzagLength: settings.zigzagLength || 14,
-                tpRatio: settings.tpRatio || 2.0,
-                slLookback: settings.slLookback || 3
-              });
+              if (!data) return;
+              const candles = data.map((d: any) => ({
+                time: d[0],
+                open: parseFloat(d[1]),
+                high: parseFloat(d[2]),
+                low: parseFloat(d[3]),
+                close: parseFloat(d[4]),
+                volume: parseFloat(d[5])
+              }));
 
-              // Check the last closed candle
-              const last = results[results.length - 2];
-              if (!last) continue;
+              for (const userDoc of usersInTf) {
+                const settings = userDoc.data();
+                const results = processIndicators(candles, {
+                  sensitivity: settings.sensitivity || 20,
+                  multiplier: settings.multiplier || 3.0,
+                  useFilter: settings.useFilter || false,
+                  rsiHistLength: settings.rsiHistLength || 14,
+                  rsiHistMALength: settings.rsiHistMALength || 14,
+                  rsiHistMAType: settings.rsiHistMAType || 'JMA',
+                  zigzagLength: settings.zigzagLength || 14,
+                  tpRatio: settings.tpRatio || 2.0,
+                  slLookback: settings.slLookback || 3
+                });
 
-              const isBuy = last.buySignal;
-              const isSell = last.sellSignal;
-              const signalType = isBuy ? "BUY" : (isSell ? "SELL" : "");
+                // Check the last closed candle
+                const last = results[results.length - 2];
+                if (!last) continue;
 
-              if (signalType) {
-                const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalType}`;
-                const alertRef = doc(db, "alerts", alertId);
-                const alertSnap = await getDoc(alertRef);
+                const isBuy = last.buySignal;
+                const isSell = last.sellSignal;
+                const signalType = isBuy ? "BUY" : (isSell ? "SELL" : "");
 
-                if (!alertSnap.exists()) {
-                  console.log(`Scanner: [SIGNAL] ${signalType} for ${symbol} (User: ${userDoc.id})`);
-                  const emoji = signalType === "BUY" ? "🟢" : "🔴";
-                  const message = `🔔 <b>NEW TRIPLE CONFIRMATION SIGNAL</b>\n\n` +
-                                  `Coin: <b>${symbol}.P</b>\n` +
-                                  `Action: <b>${signalType} ${emoji}</b>\n` +
-                                  `Price: <b>$${last.close}</b>\n` +
-                                  `TF: <b>15M (Automated)</b>\n\n` +
-                                  `TP (1:2): <b>$${last.tpPrice?.toFixed(settings.pricePrecision || 4)}</b>\n` +
-                                  `SL: <b>$${last.slPrice?.toFixed(settings.pricePrecision || 4)}</b>`;
+                if (signalType) {
+                  const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalType}`;
+                  const alertRef = doc(db, "alerts", alertId);
+                  const alertSnap = await getDoc(alertRef);
 
-                  await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      chat_id: settings.telegramChatId,
-                      text: message,
-                      parse_mode: "HTML"
-                    })
-                  });
+                  if (!alertSnap.exists()) {
+                    console.log(`Scanner: Debugging Alert Data:`, JSON.stringify(last));
+                    const now = new Date();
+                    const timeStr = now.toLocaleTimeString('en-GB');
+                    const dateStr = now.toLocaleDateString('en-GB');
 
-                  await setDoc(alertRef, {
-                    id: alertId,
-                    symbol,
-                    type: signalType,
-                    price: last.close,
-                    time: last.time,
-                    uid: userDoc.id,
-                    sentAt: Date.now()
-                  });
+                    const message = `🚀 <b>Signal Alert:</b> <code>${symbol}.P</code>\n` +
+                                    `Type: <code>${signalType} ${emoji}</code>\n` +
+                                    `Take Profit: <code>${last.tpPrice?.toFixed(settings.pricePrecision || 4) || '---'}</code>\n` +
+                                    `Stop Lose: <code>${last.slPrice?.toFixed(settings.pricePrecision || 4) || '---'}</code>\n` +
+                                    `Time: <code>${timeStr}</code>\n` +
+                                    `Date: <code>${dateStr}</code>`;
+
+                    const telegramUrl = `https://api.telegram.org/bot${settings.telegramToken}/sendMessage`;
+                    const telController = new AbortController();
+                    const telTimeout = setTimeout(() => telController.abort(), 10000);
+
+                    try {
+                      await fetch(telegramUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          chat_id: settings.telegramChatId,
+                          text: message,
+                          parse_mode: "HTML"
+                        }),
+                        signal: telController.signal
+                      });
+                      totalSignalsFound++;
+                      console.log(`Scanner: [SIGNAL SENT] ${symbol} ${signalType} ${tf} to User ${userDoc.id}`);
+                    } catch (err) {
+                      console.error(`Scanner: Telegram Fail for ${symbol}:`, err);
+                    } finally {
+                      clearTimeout(telTimeout);
+                    }
+
+                    await setDoc(alertRef, {
+                      id: alertId,
+                      symbol,
+                      type: signalType,
+                      price: last.close,
+                      time: last.time,
+                      uid: userDoc.id,
+                      sentAt: Date.now()
+                    });
+                  }
                 }
               }
-            }
-          } catch (e) {
-            // Quietly skip single symbol errors
-          }
-        }));
-        // Pause between batches to respect Binance limits and reduce local CPU load
-        await new Promise(r => setTimeout(r, 1000));
+            } catch (e) {}
+          }));
+          await new Promise(r => setTimeout(r, 500)); // Reduced batch pause
+        }
+      }
+
+      if (totalSignalsFound > 0) {
+        console.log(`Scanner: [FINISH] Detected ${totalSignalsFound} new signals across ${timeframes.length} timeframes.`);
       }
     } catch (error) {
       console.error("Global Scanner Error:", error);

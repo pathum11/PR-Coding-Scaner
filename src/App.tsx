@@ -79,7 +79,6 @@ const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
 
 export default function App() {
   const [symbol, setSymbol] = useState('BTCUSDT');
-  const [timeframe, setTimeframe] = useState('15m');
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +117,7 @@ export default function App() {
   // Alert System State
   const [alerts, setAlerts] = useState<any[]>([]);
   const [autoAlert, setAutoAlert] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('soundEnabled') !== 'false');
   const [notifications, setNotifications] = useState<any[]>([]);
   const [autoScan, setAutoScan] = useState(true);
   const [scanLookbackMinutes, setScanLookbackMinutes] = useState(30);
@@ -133,6 +132,7 @@ export default function App() {
   const [telegramToken, setTelegramToken] = useState(() => localStorage.getItem('telegramToken') || '');
   const [telegramChatId, setTelegramChatId] = useState(() => localStorage.getItem('telegramChatId') || '');
   const [pushEnabled, setPushEnabled] = useState(() => localStorage.getItem('pushEnabled') === 'true');
+  const [timeframe, setTimeframe] = useState(() => localStorage.getItem('selectedTimeframe') || '15m');
 
   // Sync with Firebase
   useEffect(() => {
@@ -149,6 +149,8 @@ export default function App() {
             if (data.telegramChatId) setTelegramChatId(data.telegramChatId);
             if (data.telegramEnabled !== undefined) setTelegramEnabled(data.telegramEnabled);
             if (data.autoScan !== undefined) setAutoScan(data.autoScan);
+            if (data.soundEnabled !== undefined) setSoundEnabled(data.soundEnabled);
+            if (data.timeframe !== undefined) setTimeframe(data.timeframe);
             if (data.sensitivity !== undefined) setSensitivity(data.sensitivity);
             if (data.multiplier !== undefined) setMultiplier(data.multiplier);
             if (data.useFilter !== undefined) setUseFilter(data.useFilter);
@@ -177,6 +179,8 @@ export default function App() {
         telegramToken,
         telegramChatId,
         autoScan,
+        soundEnabled,
+        timeframe,
         sensitivity,
         multiplier,
         useFilter,
@@ -203,7 +207,7 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [
-    telegramEnabled, telegramToken, telegramChatId, autoScan, 
+    telegramEnabled, telegramToken, telegramChatId, autoScan, soundEnabled, timeframe,
     sensitivity, multiplier, useFilter, rsiHistLength, 
     rsiHistMALength, rsiHistMAType, rsiSource, zigzagLength, 
     tpRatio, slLookback, scanLookbackMinutes, user
@@ -242,7 +246,9 @@ export default function App() {
     localStorage.setItem('telegramToken', telegramToken);
     localStorage.setItem('telegramChatId', telegramChatId);
     localStorage.setItem('pushEnabled', pushEnabled.toString());
-  }, [telegramEnabled, telegramToken, telegramChatId, pushEnabled]);
+    localStorage.setItem('soundEnabled', soundEnabled.toString());
+    localStorage.setItem('selectedTimeframe', timeframe);
+  }, [telegramEnabled, telegramToken, telegramChatId, pushEnabled, soundEnabled, timeframe]);
 
   const sendTelegramMessage = async (message: string) => {
     if (!telegramEnabled || !telegramToken || !telegramChatId) return;
@@ -1032,6 +1038,24 @@ export default function App() {
 
                     <div className="space-y-4">
                       <div className="p-4 bg-orange-500/5 rounded-xl border border-orange-500/10 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm text-zinc-100 font-bold">
+                            <Volume2 className={cn("w-4 h-4", soundEnabled ? "text-orange-500" : "text-zinc-500")} /> Sound Alerts
+                          </div>
+                          <button 
+                            onClick={() => setSoundEnabled(!soundEnabled)}
+                            className={cn(
+                              "w-10 h-5 rounded-full transition-colors relative",
+                              soundEnabled ? "bg-orange-500" : "bg-zinc-800"
+                            )}
+                          >
+                            <div className={cn(
+                              "absolute top-1 w-3 h-3 bg-white rounded-full transition-transform",
+                              soundEnabled ? "translate-x-6" : "translate-x-1"
+                            )} />
+                          </button>
+                        </div>
+                        
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-sm text-zinc-100 font-bold">
                             <Globe className="w-4 h-4 text-orange-500" /> Cloud Scanner
