@@ -348,7 +348,9 @@ export default function App() {
             });
 
             // Send Phone Notifications
-            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}.P</b>\nType: ${alert.type}\nTime: ${newNotification.time}\nMessage: ${newNotification.message}`;
+            const tpText = alert.tp ? `\nTake Profit: ${alert.tp}` : '';
+            const slText = alert.sl ? `\nStop Loss: ${alert.sl}` : '';
+            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}.P</b>\nType: ${alert.type}${tpText}${slText}\nTime: ${newNotification.time}\nMessage: ${newNotification.message}`;
             sendTelegramMessage(phoneMsg);
             showPushNotification(`Signal Alert: ${alert.symbol}.P`, `${alert.type} signal reached!`);
             
@@ -392,7 +394,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoScan, scanning, lastScanTime]);
 
-  const addAlert = (symbol: string, type: string, signalTime: number) => {
+  const addAlert = (symbol: string, type: string, signalTime: number, tp?: number, sl?: number) => {
     const alertTime = signalTime + (30 * 60 * 1000); // 30 minutes later
     const id = `${symbol}-${signalTime}`;
     
@@ -404,6 +406,8 @@ export default function App() {
         type,
         signalTime,
         alertTime,
+        tp,
+        sl,
         triggered: false
       }];
     });
@@ -558,7 +562,7 @@ export default function App() {
               }
               
               if (autoAlert) {
-                addAlert(s, signalData.type, candle.time);
+                addAlert(s, signalData.type, candle.time, signalData.tpPrice, signalData.slPrice);
               }
             }
           } catch (e) {
@@ -703,6 +707,26 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 lg:p-6 space-y-6">
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center justify-between gap-4"
+          >
+            <div className="flex items-center gap-3 text-rose-400">
+              <Info className="w-5 h-5 flex-shrink-0" />
+              <p className="text-sm font-medium whitespace-pre-line">{error}</p>
+            </div>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setError(null)}
+              className="text-rose-400 hover:bg-rose-500/10"
+            >
+              Dismiss
+            </Button>
+          </motion.div>
+        )}
         <div className="space-y-6">
           <div className="flex items-center justify-between mb-2">
             <div>
@@ -856,7 +880,7 @@ export default function App() {
                                   ? "text-orange-500" 
                                   : "text-zinc-500 hover:text-zinc-300"
                               )}
-                              onClick={() => addAlert(res.symbol, res.type, res.time)}
+                              onClick={() => addAlert(res.symbol, res.type, res.time, res.tpPrice, res.slPrice)}
                             >
                               {alerts.find(a => a.id === `${res.symbol}-${res.time}`) ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
                             </Button>

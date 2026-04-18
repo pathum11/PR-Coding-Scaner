@@ -66,12 +66,21 @@ async function startServer() {
   
   const fetchWithRetry = async (url: string, retries = 3, backoff = 1000): Promise<any> => {
     try {
-      const response = await fetch(url, { headers: { 'User-Agent': 'MarketPulse-Scanner' } });
+      const response = await fetch(url, { 
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json'
+        } 
+      });
       if (!response.ok) {
         if (response.status === 429 && retries > 0) {
           const wait = (parseInt(response.headers.get('Retry-After') || '0') * 1000) || backoff;
           await new Promise(r => setTimeout(r, wait));
           return fetchWithRetry(url, retries - 1, backoff * 2);
+        }
+        if (response.status === 451) {
+          // Blocked region
+          throw new Error("Binance Blocked: 451 (Likely US Region)");
         }
         throw new Error(`HTTP ${response.status}`);
       }
@@ -104,14 +113,24 @@ async function startServer() {
       for (const base of endpoints) {
         try {
           const exchangeRes = await fetch(`${base}/fapi/v1/exchangeInfo`, {
-            headers: { 'User-Agent': 'MarketPulse-Scanner-Background' }
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json'
+            }
           });
           if (exchangeRes.ok) {
-            exchangeData = await exchangeRes.json();
-            break;
+            const text = await exchangeRes.text();
+            try {
+              exchangeData = JSON.parse(text);
+              break;
+            } catch (jsE) {
+              console.error(`Scanner: JSON Parse error from ${base}:`, text.substring(0, 100));
+            }
+          } else {
+            console.warn(`Scanner: ${base} returned status ${exchangeRes.status}`);
           }
         } catch (e) {
-          console.warn(`Background Scanner: exchangeInfo failed via ${base}`);
+          console.warn(`Background Scanner: Fetch failed via ${base}`);
         }
       }
 
@@ -205,11 +224,14 @@ async function startServer() {
                     const now = new Date();
                     const timeStr = now.toLocaleTimeString('en-GB');
                     const dateStr = now.toLocaleDateString('en-GB');
+                    const emoji = signalType === "BUY" ? "🟢" : "🔴";
 
                     const message = `🚀 <b>Signal Alert:</b> <code>${symbol}.P</code>\n` +
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
-                                    `Take Profit: <code>${last.tpPrice?.toFixed(settings.pricePrecision || 4) || '---'}</code>\n` +
-                                    `Stop Lose: <code>${last.slPrice?.toFixed(settings.pricePrecision || 4) || '---'}</code>\n` +
+                                    `Timeframe: <code>${tf}</code>\n` +
+                                    `Entry Price: <code>${last.close}</code>\n` +
+                                    `Take Profit: <code>${last.tpPrice?.toFixed(4) || '---'}</code>\n` +
+                                    `Stop Loss: <code>${last.slPrice?.toFixed(4) || '---'}</code>\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>`;
 
