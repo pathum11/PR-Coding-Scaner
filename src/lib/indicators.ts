@@ -31,29 +31,37 @@ export interface IndicatorResult {
 }
 
 export function calculateSMA(data: number[], period: number): (number | null)[] {
-  const sma: (number | null)[] = [];
+  const sma: (number | null)[] = new Array(data.length).fill(null);
+  let sum = 0;
   for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) {
-      sma.push(null);
-      continue;
+    sum += data[i];
+    if (i >= period) {
+      sum -= data[i - period];
     }
-    const sum = data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
-    sma.push(sum / period);
+    if (i >= period - 1) {
+      sma[i] = sum / period;
+    }
   }
   return sma;
 }
 
 export function calculateStdev(data: number[], period: number): (number | null)[] {
-  const stdev: (number | null)[] = [];
+  const stdev: (number | null)[] = new Array(data.length).fill(null);
   const sma = calculateSMA(data, period);
+  
+  let sumSq = 0;
   for (let i = 0; i < data.length; i++) {
-    const currentSMA = sma[i];
-    if (currentSMA === null) {
-      stdev.push(null);
-      continue;
+    sumSq += data[i] * data[i];
+    if (i >= period) {
+      sumSq -= data[i - period] * data[i - period];
     }
-    const variance = data.slice(i - period + 1, i + 1).reduce((a, b) => a + Math.pow(b - currentSMA, 2), 0) / period;
-    stdev.push(Math.sqrt(variance));
+    
+    const currentSMA = sma[i];
+    if (currentSMA !== null) {
+      const avgSq = sumSq / period;
+      const variance = avgSq - (currentSMA * currentSMA);
+      stdev[i] = Math.sqrt(Math.max(0, variance));
+    }
   }
   return stdev;
 }
