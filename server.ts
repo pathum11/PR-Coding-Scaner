@@ -349,15 +349,30 @@ async function startServer() {
 
   // Binance Exchange Info Proxy
   app.get("/api/exchangeInfo", async (req, res) => {
-    try {
-      const url = `https://fapi.binance.com/fapi/v1/exchangeInfo`;
-      const response = await fetch(url);
-      const data = await response.json();
-      res.status(response.status).json(data);
-    } catch (error) {
-      console.error("ExchangeInfo Proxy Error:", error);
-      res.status(500).json({ error: "Failed to fetch exchange info from Binance" });
+    const endpoints = [
+      'https://fapi.binance.com',
+      'https://fapi1.binance.com',
+      'https://fapi2.binance.com',
+      'https://fapi3.binance.com'
+    ];
+    
+    let lastError = "Failed to fetch exchange info from all Binance endpoints";
+    for (const base of endpoints) {
+      try {
+        const response = await fetch(`${base}/fapi/v1/exchangeInfo`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          return res.json(data);
+        }
+        lastError = `Binance Proxy Error (${response.status}): ${await response.text()}`;
+      } catch (error: any) {
+        lastError = error.message;
+        console.error(`ExchangeInfo Proxy Attempt Fail via ${base}:`, lastError);
+      }
     }
+    res.status(500).json({ error: lastError });
   });
 
   // Vite middleware for development
