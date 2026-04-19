@@ -385,22 +385,42 @@ async function startServer() {
     ];
     
     let lastError = "Failed to fetch exchange info from all Binance endpoints";
+    let lastStatus = 500;
+
     for (const base of endpoints) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+
       try {
         const response = await fetch(`${base}/fapi/v1/exchangeInfo`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' }
+          headers: { 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+          },
+          signal: controller.signal
         });
+        
+        clearTimeout(timeout);
+
         if (response.ok) {
           const data = await response.json();
           return res.json(data);
         }
-        lastError = `Binance Proxy Error (${response.status}): ${await response.text()}`;
+
+        const text = await response.text();
+        lastStatus = response.status;
+        lastError = `Binance Proxy Error (${response.status}): ${text.substring(0, 100)}`;
+        
+        if (response.status === 451 || response.status === 403) {
+          console.error(`Scanner: Endpoint ${base} is BLOCKED (Status ${response.status})`);
+        }
       } catch (error: any) {
-        lastError = error.message;
+        clearTimeout(timeout);
+        lastError = error.name === 'AbortError' ? "Request timed out" : error.message;
         console.error(`ExchangeInfo Proxy Attempt Fail via ${base}:`, lastError);
       }
     }
-    res.status(500).json({ error: lastError });
+    res.status(lastStatus).json({ error: lastError });
   });
 
   // Vite middleware for development

@@ -449,7 +449,8 @@ export default function App() {
       // Fetch Binance Futures symbols
       const exchangeInfoRes = await fetchWithRetry('/api/exchangeInfo');
       if (!exchangeInfoRes.ok) {
-        throw new Error(`Failed to fetch exchange info: ${exchangeInfoRes.status}`);
+        const errData = await exchangeInfoRes.json().catch(() => ({ error: 'Unknown' }));
+        throw new Error(`Exchange Info failed: ${errData.error || exchangeInfoRes.status}`);
       }
       const exchangeInfo = await exchangeInfoRes.json();
       if (!exchangeInfo.symbols) {
@@ -599,7 +600,10 @@ export default function App() {
     setError(null);
     try {
       const response = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${currentTF}&limit=500`);
-      if (!response.ok) throw new Error('Failed to fetch data');
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: 'Unknown server error' }));
+        throw new Error(errData.error || `Server error: ${response.status}`);
+      }
       const data = await response.json();
       const formattedData: Candle[] = data.map((d: any) => ({
         time: d[0],
@@ -711,17 +715,24 @@ export default function App() {
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center justify-between gap-4"
+            className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg shadow-rose-900/10"
           >
-            <div className="flex items-center gap-3 text-rose-400">
-              <Info className="w-5 h-5 flex-shrink-0" />
-              <p className="text-sm font-medium whitespace-pre-line">{error}</p>
+            <div className="flex items-start gap-3 text-rose-400">
+              <Info className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-bold whitespace-pre-line uppercase tracking-tight">{error}</p>
+                <p className="text-[10px] text-rose-300/60 font-medium leading-relaxed">
+                  {error.includes('451') || error.includes('blocked') 
+                    ? "CRITICAL: Binance has restricted access from this server's region (likely USA). This prevents the scanner from reaching the exchange API."
+                    : "NOTICE: Network instability or API rate limiting detected. If this persists, verify your connection or refresh the page."}
+                </p>
+              </div>
             </div>
             <Button 
-              variant="ghost" 
+              variant="outline" 
               size="sm" 
               onClick={() => setError(null)}
-              className="text-rose-400 hover:bg-rose-500/10"
+              className="border-rose-500/20 text-rose-400 hover:bg-rose-500/10 h-8 self-end sm:self-center"
             >
               Dismiss
             </Button>
