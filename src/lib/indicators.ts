@@ -499,26 +499,41 @@ export function processIndicators(candles: Candle[], settings: {
     const isBullishTrend = dir === -1;
     const isBearishTrend = dir === 1;
 
-    // Entry Logic: zigzag_up and trend_bullish and rsi_histo_smooth > 0 and isStrong
-    const buySignal = zigzagSignal === 'BUY' && isBullishTrend && rsiHistValue > 0 && isStrong;
-    const sellSignal = zigzagSignal === 'SELL' && isBearishTrend && rsiHistValue < 0 && isStrong;
-
-    // SL/TP Logic
+    // TP/SL Logic
     const slLookback = settings.slLookback || 3;
     const tpRatio = settings.tpRatio || 2.0;
+    const minProfitPct = 0.003; // Minimum 0.3% move required for a signal to be valid
+
+    let buySignal = zigzagSignal === 'BUY' && isBullishTrend && rsiHistValue > 0 && isStrong;
+    let sellSignal = zigzagSignal === 'SELL' && isBearishTrend && rsiHistValue < 0 && isStrong;
 
     if (buySignal && position !== 'LONG') {
-      position = 'LONG';
       const lookbackLow = Math.min(...low.slice(Math.max(0, i - slLookback + 1), i + 1));
-      currentSlPrice = lookbackLow;
-      const risk = candle.close - currentSlPrice;
-      currentTpPrice = candle.close + (risk * tpRatio);
+      const risk = candle.close - lookbackLow;
+      const tp = candle.close + (risk * tpRatio);
+      
+      // Filter out low-profit signals (e.g. USDC/USDT)
+      const profitPotential = (tp - candle.close) / candle.close;
+      if (profitPotential < minProfitPct) {
+        buySignal = false;
+      } else {
+        position = 'LONG';
+        currentSlPrice = lookbackLow;
+        currentTpPrice = tp;
+      }
     } else if (sellSignal && position !== 'SHORT') {
-      position = 'SHORT';
       const lookbackHigh = Math.max(...high.slice(Math.max(0, i - slLookback + 1), i + 1));
-      currentSlPrice = lookbackHigh;
-      const risk = currentSlPrice - candle.close;
-      currentTpPrice = candle.close - (risk * tpRatio);
+      const risk = lookbackHigh - candle.close;
+      const tp = candle.close - (risk * tpRatio);
+      
+      const profitPotential = (candle.close - tp) / candle.close;
+      if (profitPotential < minProfitPct) {
+        sellSignal = false;
+      } else {
+        position = 'SHORT';
+        currentSlPrice = lookbackHigh;
+        currentTpPrice = tp;
+      }
     }
 
     // Check Exits

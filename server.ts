@@ -140,7 +140,11 @@ async function startServer() {
       }
 
       const allSymbols = exchangeData.symbols
-        .filter((s: any) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
+        .filter((s: any) => 
+          s.quoteAsset === 'USDT' && 
+          s.status === 'TRADING' && 
+          !['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'DAIUSDT'].includes(s.symbol)
+        )
         .map((s: any) => s.symbol);
 
       // 2. Fetch active users
