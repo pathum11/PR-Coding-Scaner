@@ -230,11 +230,11 @@ async function startServer() {
                     const dateStr = now.toLocaleDateString('en-GB');
                     const emoji = signalType === "BUY" ? "🟢" : "🔴";
 
-                    const message = `🚀 <b>Signal Alert:</b> <code>${symbol}.P</code>\n` +
+                    const message = `🚀 <b>Signal:</b> <code>${symbol}</code>\n` +
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
                                     `Market Price at Alert: <code>${last.close}</code>\n` +
-                                    `Entry Price (Candle Close): <code>${last.close}</code>\n` +
+                                    `Entry Price: <code>${last.close}</code>\n` +
                                     `Take Profit: <code>${last.tpPrice ? Number(last.tpPrice).toFixed(4) : '---'}</code>\n` +
                                     `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
                                     `Recommended Leverage: <code>${last.recommendedLeverage || '3'}x</code>\n` +
