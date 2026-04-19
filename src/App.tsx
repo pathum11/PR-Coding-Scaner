@@ -83,26 +83,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Indicator Settings
-  const [sensitivity, setSensitivity] = useState(20); // ATR Period
-  const [multiplier, setMultiplier] = useState(3.0); // ATR Multiplier
-  const [useFilter, setUseFilter] = useState(false);
-  const [confirmationSignals, setConfirmationSignals] = useState(true);
-  const [contrarianSignals, setContrarianSignals] = useState(true);
-  const [showZones, setShowZones] = useState(true);
-  const [showTrail, setShowTrail] = useState(true);
-
-  // RSI Histogram Settings
-  const [rsiHistLength, setRsiHistLength] = useState(14);
-  const [rsiHistMALength, setRsiHistMALength] = useState(14);
-  const [rsiHistMAType, setRsiHistMAType] = useState('JMA');
-  const [rsiSource, setRsiSource] = useState<'CLOSE' | 'HL2'>('CLOSE');
-  const [kamaAlpha, setKamaAlpha] = useState(3);
-
-  // ZigZag Settings
-  const [zigzagLength, setZigzagLength] = useState(14);
-  const [zigzagPhase, setZigzagPhase] = useState(50);
-  const [zigzagPower, setZigzagPower] = useState(2);
+  // Indicator Settings (v9 Sync)
+  const [stSense, setStSense] = useState(14);
+  const [stMult, setStMult] = useState(3.0);
+  const [rsiLen, setRsiLen] = useState(14);
+  const [rsiSm, setRsiSm] = useState(14);
   const [tpRatio, setTpRatio] = useState(2.0);
   const [slLookback, setSlLookback] = useState(3);
 
@@ -132,7 +117,7 @@ export default function App() {
   const [telegramToken, setTelegramToken] = useState(() => localStorage.getItem('telegramToken') || '');
   const [telegramChatId, setTelegramChatId] = useState(() => localStorage.getItem('telegramChatId') || '');
   const [pushEnabled, setPushEnabled] = useState(() => localStorage.getItem('pushEnabled') === 'true');
-  const [timeframe, setTimeframe] = useState(() => localStorage.getItem('selectedTimeframe') || '15m');
+  const [timeframe, setTimeframe] = useState(() => localStorage.getItem('selectedTimeframe') || '5m');
 
   // Sync with Firebase
   useEffect(() => {
@@ -151,14 +136,10 @@ export default function App() {
             if (data.autoScan !== undefined) setAutoScan(data.autoScan);
             if (data.soundEnabled !== undefined) setSoundEnabled(data.soundEnabled);
             if (data.timeframe !== undefined) setTimeframe(data.timeframe);
-            if (data.sensitivity !== undefined) setSensitivity(data.sensitivity);
-            if (data.multiplier !== undefined) setMultiplier(data.multiplier);
-            if (data.useFilter !== undefined) setUseFilter(data.useFilter);
-            if (data.rsiHistLength !== undefined) setRsiHistLength(data.rsiHistLength);
-            if (data.rsiHistMALength !== undefined) setRsiHistMALength(data.rsiHistMALength);
-            if (data.rsiHistMAType !== undefined) setRsiHistMAType(data.rsiHistMAType);
-            if (data.rsiSource !== undefined) setRsiSource(data.rsiSource);
-            if (data.zigzagLength !== undefined) setZigzagLength(data.zigzagLength);
+            if (data.stSense !== undefined) setStSense(data.stSense);
+            if (data.stMult !== undefined) setStMult(data.stMult);
+            if (data.rsiLen !== undefined) setRsiLen(data.rsiLen);
+            if (data.rsiSm !== undefined) setRsiSm(data.rsiSm);
             if (data.tpRatio !== undefined) setTpRatio(data.tpRatio);
             if (data.slLookback !== undefined) setSlLookback(data.slLookback);
             if (data.scanLookbackMinutes !== undefined) setScanLookbackMinutes(data.scanLookbackMinutes);
@@ -181,14 +162,10 @@ export default function App() {
         autoScan,
         soundEnabled,
         timeframe,
-        sensitivity,
-        multiplier,
-        useFilter,
-        rsiHistLength,
-        rsiHistMALength,
-        rsiHistMAType,
-        rsiSource,
-        zigzagLength,
+        stSense,
+        stMult,
+        rsiLen,
+        rsiSm,
         tpRatio,
         slLookback,
         scanLookbackMinutes,
@@ -208,9 +185,7 @@ export default function App() {
     }
   }, [
     telegramEnabled, telegramToken, telegramChatId, autoScan, soundEnabled, timeframe,
-    sensitivity, multiplier, useFilter, rsiHistLength, 
-    rsiHistMALength, rsiHistMAType, rsiSource, zigzagLength, 
-    tpRatio, slLookback, scanLookbackMinutes, user
+    stSense, stMult, rsiLen, rsiSm, tpRatio, slLookback, scanLookbackMinutes, user
   ]);
 
   const login = async () => {
@@ -504,17 +479,10 @@ export default function App() {
             }));
             
             const processed = processIndicators(formatted, { 
-              sensitivity, 
-              multiplier, 
-              useFilter,
-              rsiHistLength,
-              rsiHistMALength,
-              rsiHistMAType,
-              kamaAlpha,
-              rsiSource,
-              zigzagLength,
-              zigzagPhase,
-              zigzagPower,
+              stSense, 
+              stMult, 
+              rsiLen,
+              rsiSm,
               tpRatio,
               slLookback
             });
@@ -553,7 +521,6 @@ export default function App() {
                 tpPrice: candle.tpPrice,
                 slPrice: candle.slPrice,
                 time: candle.time,
-                isStrong: candle.isStrong,
                 scanTime: Date.now()
               };
               
@@ -630,21 +597,14 @@ export default function App() {
   const processedData = useMemo(() => {
     if (candles.length === 0) return [];
     return processIndicators(candles, { 
-      sensitivity, 
-      multiplier, 
-      useFilter,
-      rsiHistLength,
-      rsiHistMALength,
-      rsiHistMAType,
-      kamaAlpha,
-      rsiSource,
-      zigzagLength,
-      zigzagPhase,
-      zigzagPower,
+      stSense, 
+      stMult, 
+      rsiLen,
+      rsiSm,
       tpRatio,
       slLookback
     });
-  }, [candles, sensitivity, multiplier, useFilter, rsiHistLength, rsiHistMALength, rsiHistMAType, kamaAlpha, rsiSource, zigzagLength, zigzagPhase, zigzagPower, tpRatio, slLookback]);
+  }, [candles, stSense, stMult, rsiLen, rsiSm, tpRatio, slLookback]);
 
   const latest = processedData[processedData.length - 1];
 
@@ -744,7 +704,7 @@ export default function App() {
               <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tighter uppercase italic">
                  <LayoutDashboard className="w-6 h-6 text-orange-500" /> AI Dashboard <span className="text-orange-500">Live</span>
               </h2>
-              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Unified Triple Confirmation Analysis Engine</p>
+              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">V9 Sync Analysis Engine</p>
             </div>
             
             <div className="flex items-center gap-3">
@@ -778,7 +738,7 @@ export default function App() {
                   <ListFilter className="w-5 h-5 text-orange-500" /> Filtered Signals
                 </CardTitle>
                 <CardDescription className="text-zinc-400">
-                  Rules: ZigZag Flip + Trend Alignment + RSI Hist + Strength
+                  Rules: Supertrend Flip + EMA Persistency + RSI Alignment
                 </CardDescription>
               </div>
               <Badge variant="outline" className="bg-black/40 border-white/10 text-white">
@@ -793,7 +753,7 @@ export default function App() {
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Market Price</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">TP (1:2)</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">Take Profit</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-rose-500">Stop Loss</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
                     </tr>
@@ -831,10 +791,10 @@ export default function App() {
                           <td className="p-4">
                             <div 
                               className="flex items-center gap-2 cursor-pointer group/copy hover:bg-orange-500/10 p-1 -ml-1 rounded transition-colors w-fit"
-                              onClick={() => copyToClipboard(res.symbol)}
+                              onClick={() => copyToClipboard(res.symbol + '.P')}
                               title="Click to copy symbol"
                             >
-                              <span className="font-bold text-zinc-100">{res.symbol}</span>
+                              <span className="font-bold text-zinc-100">{res.symbol}.P</span>
                               <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
                                 {copiedSymbol === res.symbol ? (
                                   <Check className="w-3 h-3 text-emerald-500" />
@@ -883,51 +843,74 @@ export default function App() {
                   </CardHeader>
                   <CardContent className="space-y-4 text-zinc-300">
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">ATR Period</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Timeframe</label>
+                      <select 
+                        value={timeframe} 
+                        onChange={(e) => setTimeframe(e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 h-8 text-xs font-mono rounded-md px-2 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      >
+                        <option value="1m">1m</option>
+                        <option value="5m">5m</option>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                        <option value="4h">4h</option>
+                        <option value="1d">1d</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">ST Sensitivity</label>
                       <Input 
                         type="number" 
-                        value={sensitivity} 
-                        onChange={(e) => setSensitivity(parseInt(e.target.value))}
+                        value={stSense} 
+                        onChange={(e) => setStSense(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">ATR Multiplier</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">ST Multiplier</label>
                       <Input 
                         type="number" 
                         step="0.1"
-                        value={multiplier} 
-                        onChange={(e) => setMultiplier(parseFloat(e.target.value))}
+                        value={stMult} 
+                        onChange={(e) => setStMult(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-orange-950/20 border-orange-500/20">
-                  <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02] py-3">
-                    <CardTitle className="text-[11px] font-bold text-white uppercase flex items-center gap-2">
-                       <Activity className="w-3 h-3 text-orange-500" /> ZigZag Settings
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-4 space-y-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] text-zinc-500 uppercase font-bold">Sensitivity (JMA)</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">RSI Length</label>
                       <Input 
                         type="number" 
-                        value={zigzagLength} 
-                        onChange={(e) => setZigzagLength(parseInt(e.target.value))}
-                        className="bg-black/40 border-white/10 h-7 text-[10px] font-mono"
+                        value={rsiLen} 
+                        onChange={(e) => setRsiLen(parseInt(e.target.value))}
+                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] text-zinc-500 uppercase font-bold">TP Ratio (1:X)</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">RSI Smoothing</label>
                       <Input 
                         type="number" 
-                        step={0.1}
+                        value={rsiSm} 
+                        onChange={(e) => setRsiSm(parseInt(e.target.value))}
+                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">TP Ratio (R:R)</label>
+                      <Input 
+                        type="number" 
+                        step="0.1"
                         value={tpRatio} 
                         onChange={(e) => setTpRatio(parseFloat(e.target.value))}
-                        className="bg-black/40 border-white/10 h-7 text-[10px] font-mono"
+                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">SL Lookback</label>
+                      <Input 
+                        type="number" 
+                        value={slLookback} 
+                        onChange={(e) => setSlLookback(parseInt(e.target.value))}
+                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                   </CardContent>
@@ -976,11 +959,11 @@ export default function App() {
                   <CardContent className="space-y-3 p-4">
                     <div className="flex items-center gap-3">
                       <Badge className="bg-emerald-500/20 text-emerald-400 border-none text-[10px] py-0 h-5">BUY</Badge>
-                      <span className="text-[10px] text-zinc-400">Triple Confirm Long</span>
+                      <span className="text-[10px] text-zinc-400">V9 Sync Long Signal</span>
                     </div>
                     <div className="flex items-center gap-3">
                       <Badge className="bg-rose-500/20 text-rose-400 border-none text-[10px] py-0 h-5">SELL</Badge>
-                      <span className="text-[10px] text-zinc-400">Triple Confirm Short</span>
+                      <span className="text-[10px] text-zinc-400">V9 Sync Short Signal</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -1150,10 +1133,10 @@ export default function App() {
                 <div className="flex justify-between items-start">
                   <div 
                     className="flex items-center gap-2 cursor-pointer group/copy hover:bg-white/5 px-1.5 py-0.5 -ml-1.5 rounded transition-colors"
-                    onClick={() => copyToClipboard(notif.symbol)}
+                    onClick={() => copyToClipboard(notif.symbol + '.P')}
                     title="Click to copy symbol"
                   >
-                    <h4 className="text-sm font-bold text-zinc-100">{notif.symbol}</h4>
+                    <h4 className="text-sm font-bold text-zinc-100">{notif.symbol}.P</h4>
                     <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
                       {copiedSymbol === notif.symbol ? (
                         <Check className="w-3 h-3 text-emerald-500" />

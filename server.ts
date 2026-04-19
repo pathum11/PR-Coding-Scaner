@@ -165,13 +165,13 @@ async function startServer() {
       
       if (activeUsersCount === 0) return;
 
-      const timeframes = [...new Set(activeUsers.map(u => u.data().timeframe || '15m'))];
+      const timeframes = [...new Set(activeUsers.map(u => u.data().timeframe || '5m'))];
       let totalSignalsFound = 0;
 
       for (const tf of timeframes) {
         console.log(`Scanner: Processing timeframe ${tf}...`);
         
-        const usersInTf = activeUsers.filter(u => (u.data().timeframe || '15m') === tf);
+        const usersInTf = activeUsers.filter(u => (u.data().timeframe || '5m') === tf);
         
         const batchSize = 10;
         for (let i = 0; i < allSymbols.length; i += batchSize) {
@@ -199,13 +199,10 @@ async function startServer() {
               for (const userDoc of usersInTf) {
                 const settings = userDoc.data();
                 const results = processIndicators(candles, {
-                  sensitivity: settings.sensitivity || 20,
-                  multiplier: settings.multiplier || 3.0,
-                  useFilter: settings.useFilter || false,
-                  rsiHistLength: settings.rsiHistLength || 14,
-                  rsiHistMALength: settings.rsiHistMALength || 14,
-                  rsiHistMAType: settings.rsiHistMAType || 'JMA',
-                  zigzagLength: settings.zigzagLength || 14,
+                  stSense: settings.stSense || 14,
+                  stMult: settings.stMult || 3.0,
+                  rsiLen: settings.rsiLen || 14,
+                  rsiSm: settings.rsiSm || 14,
                   tpRatio: settings.tpRatio || 2.0,
                   slLookback: settings.slLookback || 3
                 });
@@ -230,7 +227,7 @@ async function startServer() {
                     const dateStr = now.toLocaleDateString('en-GB');
                     const emoji = signalType === "BUY" ? "🟢" : "🔴";
 
-                    const message = `🚀 <b>Signal:</b> <code>${symbol}</code>\n` +
+                    const message = `🚀 <b>Signal:</b> <code>${symbol}.P</code>\n` +
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
                                     `Market Price at Alert: <code>${last.close}</code>\n` +
@@ -257,7 +254,7 @@ async function startServer() {
                         signal: telController.signal
                       });
                       totalSignalsFound++;
-                      console.log(`Scanner: [SIGNAL SENT] ${symbol} ${signalType} ${tf} to User ${userDoc.id}`);
+                      console.log(`Scanner: [SIGNAL SENT] ${symbol}.P ${signalType} ${tf} to User ${userDoc.id}`);
                     } catch (err) {
                       console.error(`Scanner: Telegram Fail for ${symbol}:`, err);
                     } finally {
