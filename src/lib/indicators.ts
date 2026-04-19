@@ -428,113 +428,113 @@ export function processIndicators(candles: Candle[], settings: {
   const dev20 = calculateStdev(close, 20);
   const rsi = calculateRSI(close, 14);
 
-  let prevHaOpen = (candles[0].open + candles[0].close) / 2;
-  let prevHaClose = (candles[0].open + candles[0].high + candles[0].low + candles[0].close) / 4;
-  let lastTouchState: string | null = null;
-  let lastTouchTime: number | null = null;
+    // 4. Volatility (ATR) for dynamic SL/TP
+    const atrValues = calculateATR(high, low, close, 14);
 
-  let currentSlPrice: number | null = null;
-  let currentTpPrice: number | null = null;
-  let position: 'LONG' | 'SHORT' | null = null;
+    let prevHaOpen = (candles[0].open + candles[0].close) / 2;
+    let prevHaClose = (candles[0].open + candles[0].high + candles[0].low + candles[0].close) / 4;
+    let lastTouchState: string | null = null;
+    let lastTouchTime: number | null = null;
 
-  return candles.map((candle, i) => {
-    // Heikin Ashi Calculation
-    let haOpen: number, haClose: number, haHigh: number, haLow: number;
-    if (i === 0) {
-      haOpen = prevHaOpen;
-      haClose = prevHaClose;
-    } else {
-      haClose = (candle.open + candle.high + candle.low + candle.close) / 4;
-      haOpen = (prevHaOpen + prevHaClose) / 2;
-    }
-    haHigh = Math.max(candle.high, haOpen, haClose);
-    haLow = Math.min(candle.low, haOpen, haClose);
+    let currentSlPrice: number | null = null;
+    let currentTpPrice: number | null = null;
+    let position: 'LONG' | 'SHORT' | null = null;
 
-    prevHaOpen = haOpen;
-    prevHaClose = haClose;
-
-    const st = superTrend[i];
-    const dir = direction[i];
-    const basis = sma20[i];
-    const dev = dev20[i];
-    const upperZone = basis !== null && dev !== null ? basis + 2 * dev : null;
-    const lowerZone = basis !== null && dev !== null ? basis - 2 * dev : null;
-    const currentRSI = rsi[i];
-    const currentADX = adx[i];
-    const rsiHistValue = rsiHistMA[i];
-
-    // Jurik ZigZag Signal
-    // ta.falling(jma_price[1], 1) and not ta.falling(jma_price, 1) -> Flip UP
-    // ta.rising(jma_price[1], 1) and not ta.rising(jma_price, 1) -> Flip DOWN
-    let zigzagSignal: 'BUY' | 'SELL' | null = null;
-    let zigzagPivot: number | null = null;
-    
-    if (i > 1) {
-      const p = jma_price[i];
-      const p1 = jma_price[i - 1];
-      const p2 = jma_price[i - 2];
-      
-      if (p !== null && p1 !== null && p2 !== null) {
-        const wasFalling = p1 < p2;
-        const isNotFalling = p >= p1;
-        const zigzagUp = wasFalling && isNotFalling;
-
-        const wasRising = p1 > p2;
-        const isNotRising = p <= p1;
-        const zigzagDown = wasRising && isNotRising;
-
-        if (zigzagUp) {
-          zigzagSignal = 'BUY';
-          // Nearest low
-          zigzagPivot = Math.min(...low.slice(Math.max(0, i-2), i+1));
-        } else if (zigzagDown) {
-          zigzagSignal = 'SELL';
-          // Nearest high
-          zigzagPivot = Math.max(...high.slice(Math.max(0, i-2), i+1));
+    return candles.map((candle, i) => {
+        // Heikin Ashi Calculation
+        let haOpen: number, haClose: number, haHigh: number, haLow: number;
+        if (i === 0) {
+            haOpen = (candle.open + candle.close) / 2;
+            haClose = (candle.open + candle.high + candle.low + candle.close) / 4;
+        } else {
+            haClose = (candle.open + candle.high + candle.low + candle.close) / 4;
+            haOpen = (prevHaOpen + prevHaClose) / 2;
         }
-      }
-    }
+        haHigh = Math.max(candle.high, haOpen, haClose);
+        haLow = Math.min(candle.low, haOpen, haClose);
 
-    const isStrong = currentADX !== null && currentADX > 25;
-    const isBullishTrend = dir === -1;
-    const isBearishTrend = dir === 1;
+        prevHaOpen = haOpen;
+        prevHaClose = haClose;
 
-    // TP/SL Logic
-    const slLookback = settings.slLookback || 3;
-    const tpRatio = settings.tpRatio || 2.0;
-    const minProfitPct = 0.003; // Minimum 0.3% move required for a signal to be valid
+        const st = superTrend[i];
+        const dir = direction[i];
+        const basis = sma20[i];
+        const dev = dev20[i];
+        const upperZone = basis !== null && dev !== null ? basis + 2 * dev : null;
+        const lowerZone = basis !== null && dev !== null ? basis - 2 * dev : null;
+        const currentRSI = rsi[i];
+        const currentADX = adx[i];
+        const rsiHistValue = rsiHistMA[i];
+        const currentATR = atrValues[i] || 0;
 
-    let buySignal = zigzagSignal === 'BUY' && isBullishTrend && rsiHistValue > 0 && isStrong;
-    let sellSignal = zigzagSignal === 'SELL' && isBearishTrend && rsiHistValue < 0 && isStrong;
+        let zigzagSignal: 'BUY' | 'SELL' | null = null;
+        let zigzagPivot: number | null = null;
+        
+        if (i > 1) {
+            const p = jma_price[i];
+            const p1 = jma_price[i - 1];
+            const p2 = jma_price[i - 2];
+            
+            if (p !== null && p1 !== null && p2 !== null) {
+                const wasFalling = p1 < p2;
+                const isNotFalling = p >= p1;
+                const zigzagUp = wasFalling && isNotFalling;
 
-    if (buySignal && position !== 'LONG') {
-      const lookbackLow = Math.min(...low.slice(Math.max(0, i - slLookback + 1), i + 1));
-      const risk = candle.close - lookbackLow;
-      const tp = candle.close + (risk * tpRatio);
-      
-      // Filter out low-profit signals (e.g. USDC/USDT)
-      const profitPotential = (tp - candle.close) / candle.close;
-      if (profitPotential < minProfitPct) {
-        buySignal = false;
-      } else {
-        position = 'LONG';
-        currentSlPrice = lookbackLow;
-        currentTpPrice = tp;
-      }
-    } else if (sellSignal && position !== 'SHORT') {
-      const lookbackHigh = Math.max(...high.slice(Math.max(0, i - slLookback + 1), i + 1));
-      const risk = lookbackHigh - candle.close;
-      const tp = candle.close - (risk * tpRatio);
-      
-      const profitPotential = (candle.close - tp) / candle.close;
-      if (profitPotential < minProfitPct) {
-        sellSignal = false;
-      } else {
-        position = 'SHORT';
-        currentSlPrice = lookbackHigh;
-        currentTpPrice = tp;
-      }
-    }
+                const wasRising = p1 > p2;
+                const isNotRising = p <= p1;
+                const zigzagDown = wasRising && isNotRising;
+
+                if (zigzagUp) {
+                    zigzagSignal = 'BUY';
+                    zigzagPivot = Math.min(...low.slice(Math.max(0, i-2), i+1));
+                } else if (zigzagDown) {
+                    zigzagSignal = 'SELL';
+                    zigzagPivot = Math.max(...high.slice(Math.max(0, i-2), i+1));
+                }
+            }
+        }
+
+        const isStrong = currentADX !== null && currentADX > 25;
+        const isBullishTrend = dir === -1;
+        const isBearishTrend = dir === 1;
+        
+        // TP/SL Logic with ATR buffer
+        const slLookback = settings.slLookback || 3;
+        const tpRatio = settings.tpRatio || 2.0;
+        const minProfitPct = 0.003; 
+
+        let buySignal = zigzagSignal === 'BUY' && isBullishTrend && rsiHistValue > 0 && isStrong;
+        let sellSignal = zigzagSignal === 'SELL' && isBearishTrend && rsiHistValue < 0 && isStrong;
+
+        if (buySignal && position !== 'LONG') {
+            const lookbackLow = Math.min(...low.slice(Math.max(0, i - slLookback + 1), i + 1));
+            const sl = lookbackLow - (currentATR * 0.5);
+            const risk = candle.close - sl;
+            const tp = candle.close + (risk * tpRatio);
+            
+            const profitPotential = (tp - candle.close) / candle.close;
+            if (profitPotential < minProfitPct) {
+                buySignal = false;
+            } else {
+                position = 'LONG';
+                currentSlPrice = sl;
+                currentTpPrice = tp;
+            }
+        } else if (sellSignal && position !== 'SHORT') {
+            const lookbackHigh = Math.max(...high.slice(Math.max(0, i - slLookback + 1), i + 1));
+            const sl = lookbackHigh + (currentATR * 0.5);
+            const risk = sl - candle.close;
+            const tp = candle.close - (risk * tpRatio);
+            
+            const profitPotential = (candle.close - tp) / candle.close;
+            if (profitPotential < minProfitPct) {
+                sellSignal = false;
+            } else {
+                position = 'SHORT';
+                currentSlPrice = sl;
+                currentTpPrice = tp;
+            }
+        }
 
     // Check Exits
     if (position === 'LONG') {
