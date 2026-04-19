@@ -236,6 +236,7 @@ async function startServer() {
                                     `Entry Price: <code>${last.close}</code>\n` +
                                     `Take Profit: <code>${last.tpPrice ? Number(last.tpPrice).toFixed(4) : '---'}</code>\n` +
                                     `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
+                                    `Recommended Leverage: <code>${last.recommendedLeverage || '3'}x</code>\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>`;
 

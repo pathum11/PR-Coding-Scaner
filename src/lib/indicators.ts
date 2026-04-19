@@ -28,6 +28,7 @@ export interface IndicatorResult {
   zigzagSignal: 'BUY' | 'SELL' | null;
   slPrice: number | null;
   tpPrice: number | null;
+  recommendedLeverage: number | null;
 }
 
 export function calculateSMA(data: number[], period: number): (number | null)[] {
@@ -584,6 +585,14 @@ export function processIndicators(candles: Candle[], settings: {
       zigzagSignal,
       slPrice: currentSlPrice,
       tpPrice: currentTpPrice,
+      recommendedLeverage: (() => {
+        if (!currentSlPrice || !candle.close) return null;
+        const diff = Math.abs(candle.close - currentSlPrice) / candle.close;
+        // Logic: Suggest leverage such that a move to SL is ~20% of the collateral (safe margin)
+        // Leverage = 0.20 / distance_to_sl
+        const suggested = Math.floor(0.20 / diff);
+        return Math.max(1, Math.min(20, suggested)); // Min 1x, Max 20x
+      })(),
       position: position
     };
   });
