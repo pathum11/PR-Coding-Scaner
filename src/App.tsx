@@ -852,9 +852,9 @@ export default function App() {
                               {res.type}
                             </Badge>
                           </td>
-                          <td className="p-4 font-mono text-zinc-300">${res.price < 1 ? res.price.toFixed(5) : res.price.toLocaleString()}</td>
-                          <td className="p-4 font-bold text-emerald-400 font-mono">${res.tpPrice ? (res.tpPrice < 1 ? res.tpPrice.toFixed(5) : res.tpPrice.toLocaleString()) : '---'}</td>
-                          <td className="p-4 font-bold text-rose-400 font-mono">${res.slPrice ? (res.slPrice < 1 ? res.slPrice.toFixed(5) : res.slPrice.toLocaleString()) : '---'}</td>
+                          <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
+                          <td className="p-4 font-bold text-emerald-400 font-mono">${res.tpPrice ? res.tpPrice.toFixed(4) : '---'}</td>
+                          <td className="p-4 font-bold text-rose-400 font-mono">${res.slPrice ? res.slPrice.toFixed(4) : '---'}</td>
                           <td className="p-4">
                             {res.isStrong ? (
                               <Badge variant="outline" className="border-orange-500/50 text-orange-400 text-[10px] h-5">STRONG</Badge>

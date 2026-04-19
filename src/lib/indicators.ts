@@ -509,10 +509,14 @@ export function processIndicators(candles: Candle[], settings: {
 
         if (buySignal && position !== 'LONG') {
             const lookbackLow = Math.min(...low.slice(Math.max(0, i - slLookback + 1), i + 1));
-            const sl = lookbackLow - (currentATR * 0.5);
-            const risk = candle.close - sl;
-            const tp = candle.close + (risk * tpRatio);
+            const rawSl = lookbackLow - (currentATR * 0.5);
+            const risk = candle.close - rawSl;
+            const rawTp = candle.close + (risk * tpRatio);
             
+            // Binance 4 decimal precision limit
+            const sl = Number(rawSl.toFixed(4));
+            const tp = Number(rawTp.toFixed(4));
+
             const profitPotential = (tp - candle.close) / candle.close;
             if (profitPotential < minProfitPct) {
                 buySignal = false;
@@ -523,10 +527,14 @@ export function processIndicators(candles: Candle[], settings: {
             }
         } else if (sellSignal && position !== 'SHORT') {
             const lookbackHigh = Math.max(...high.slice(Math.max(0, i - slLookback + 1), i + 1));
-            const sl = lookbackHigh + (currentATR * 0.5);
-            const risk = sl - candle.close;
-            const tp = candle.close - (risk * tpRatio);
+            const rawSl = lookbackHigh + (currentATR * 0.5);
+            const risk = rawSl - candle.close;
+            const rawTp = candle.close - (risk * tpRatio);
             
+            // Binance 4 decimal precision limit
+            const sl = Number(rawSl.toFixed(4));
+            const tp = Number(rawTp.toFixed(4));
+
             const profitPotential = (candle.close - tp) / candle.close;
             if (profitPotential < minProfitPct) {
                 sellSignal = false;
