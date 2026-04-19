@@ -780,27 +780,24 @@ export default function App() {
                   <thead>
                     <tr className="border-b border-zinc-800 bg-black/20">
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Strategy</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Price</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Market Price</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">TP (1:2)</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-rose-500">Stop Loss</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Strength</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-center">Alert</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/50">
                     {scanResults.length === 0 && !scanning && (
                       <tr>
-                        <td colSpan={10} className="p-12 text-center text-zinc-500">
+                        <td colSpan={6} className="p-12 text-center text-zinc-500">
                           No signals found. Click "Start Full Scan" to analyze the market.
                         </td>
                       </tr>
                     )}
                     {scanning && scanResults.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="p-12 text-center">
+                        <td colSpan={6} className="p-12 text-center">
                           <div className="flex flex-col items-center gap-4">
                             <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                             <div className="space-y-1">
@@ -836,14 +833,6 @@ export default function App() {
                               </div>
                             </div>
                           </td>
-                          <td className="p-4 text-xs text-zinc-500 whitespace-nowrap">
-                            <Badge variant="outline" className={cn(
-                              "border-none text-[10px] h-5",
-                              res.source?.includes("ZigZag") ? "bg-purple-500/10 text-purple-400" : "bg-orange-500/10 text-orange-400"
-                            )}>
-                              {res.source || 'Strategy'}
-                            </Badge>
-                          </td>
                           <td className="p-4">
                             <Badge className={cn(
                               "border-none",
@@ -855,13 +844,6 @@ export default function App() {
                           <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
                           <td className="p-4 font-bold text-emerald-400 font-mono">${res.tpPrice ? res.tpPrice.toFixed(4) : '---'}</td>
                           <td className="p-4 font-bold text-rose-400 font-mono">${res.slPrice ? res.slPrice.toFixed(4) : '---'}</td>
-                          <td className="p-4">
-                            {res.isStrong ? (
-                              <Badge variant="outline" className="border-orange-500/50 text-orange-400 text-[10px] h-5">STRONG</Badge>
-                            ) : (
-                              <span className="text-zinc-600 text-xs">Normal</span>
-                            )}
-                          </td>
                            <td className="p-4 text-xs text-zinc-500 font-mono">
                              {new Date(res.time).toLocaleTimeString('en-US', {
                                timeZone: 'Asia/Colombo',
@@ -870,21 +852,6 @@ export default function App() {
                                hour12: false
                              })} <span className="text-[10px] opacity-70">IST</span>
                            </td>
-                          <td className="p-4">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={cn(
-                                "h-8 w-8",
-                                alerts.find(a => a.id === `${res.symbol}-${res.time}`) 
-                                  ? "text-orange-500" 
-                                  : "text-zinc-500 hover:text-zinc-300"
-                              )}
-                              onClick={() => addAlert(res.symbol, res.type, res.time, res.tpPrice, res.slPrice)}
-                            >
-                              {alerts.find(a => a.id === `${res.symbol}-${res.time}`) ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-                            </Button>
-                          </td>
                         </motion.tr>
                       ))}
                     </AnimatePresence>
