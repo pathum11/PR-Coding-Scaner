@@ -567,8 +567,9 @@ export function processIndicators(candles: Candle[], settings: {
       trend: dir === -1 ? 'BULLISH' : 'BEARISH',
       zigzagPivot,
       zigzagSignal,
-      slPrice: position ? currentSlPrice : null,
-      tpPrice: position ? currentTpPrice : null
+      slPrice: currentSlPrice,
+      tpPrice: currentTpPrice,
+      position: position
     };
   });
 }

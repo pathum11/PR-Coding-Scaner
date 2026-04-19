@@ -230,8 +230,8 @@ async function startServer() {
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
                                     `Entry Price: <code>${last.close}</code>\n` +
-                                    `Take Profit: <code>${last.tpPrice?.toFixed(4) || '---'}</code>\n` +
-                                    `Stop Loss: <code>${last.slPrice?.toFixed(4) || '---'}</code>\n` +
+                                    `Take Profit: <code>${last.tpPrice ? Number(last.tpPrice).toFixed(4) : '---'}</code>\n` +
+                                    `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>`;
 
