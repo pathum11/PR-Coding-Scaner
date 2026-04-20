@@ -327,6 +327,22 @@ async function startServer() {
         return;
       }
 
+      // Helper to log scanner behavior to user dashboard
+      const logActivity = async (userId: string, symbol: string, msg: string, type: 'INFO' | 'SUCCESS' | 'ERROR' | 'WARNING') => {
+        try {
+          const logId = `log-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          await setDoc(doc(db, "activity", logId), {
+            userId,
+            symbol,
+            message: msg,
+            type,
+            timestamp: Date.now()
+          });
+        } catch (e) {
+          console.error("Scanner activity log fail:", e);
+        }
+      };
+
       const timeframes = [...new Set(activeUsers.map(u => u.data().timeframe || '5m'))];
       let totalSignalsFound = 0;
 
@@ -337,15 +353,26 @@ async function startServer() {
         let btcTrend = "UNKNOWN ⚪";
         try {
           let btcRaw: any = null;
-          for (const base of BINANCE_ENDPOINTS) {
-            try {
-              const res = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=100`);
-              if (res && Array.isArray(res)) {
-                btcRaw = res;
-                break;
-              }
-            } catch (e) {}
+          
+          // Check cache first
+          const cacheKey = `BTCUSDT-${tf}`;
+          const cached = cachedBtcKlines.get(cacheKey);
+          if (cached && (Date.now() - cached.timestamp < BTC_KLINES_CACHE_TTL)) {
+            btcRaw = cached.data;
+          } else {
+            for (const base of BINANCE_ENDPOINTS) {
+              try {
+                const res = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=100`);
+                if (res && Array.isArray(res)) {
+                  btcRaw = res;
+                  // Update cache for other requests too
+                  cachedBtcKlines.set(cacheKey, { data: res, timestamp: Date.now() });
+                  break;
+                }
+              } catch (e) {}
+            }
           }
+
           if (btcRaw) {
             const btcCandles = btcRaw.map((d: any) => ({
               time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
@@ -412,6 +439,7 @@ async function startServer() {
                 if (last.close > 7) {
                   if (last.buySignal || last.sellSignal) {
                     console.log(`Scanner: Signal skipped for ${symbol} - Price (${last.close}) higher than 7 USDT limit.`);
+                    await logActivity(userDoc.id, symbol, `Signal detected but skipped: Price (${last.close}) is higher than your 7 USDT limit.`, 'WARNING');
                   }
                   continue;
                 }
@@ -429,6 +457,7 @@ async function startServer() {
 
                 if ((isBuy || isSell) && !signalType) {
                   console.log(`Scanner: Signal for ${symbol} skipped - Does not align with BTC Trend (${btcTrend})`);
+                  await logActivity(userDoc.id, symbol, `Signal (${isBuy ? 'BUY' : 'SELL'}) skipped: Market context is not favorable (BTC Trend is ${btcTrend}).`, 'WARNING');
                 }
 
                 if (signalType) {
@@ -454,7 +483,8 @@ async function startServer() {
                                     `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
                                     `Recommended Leverage: <code>${last.recommendedLeverage || '7'}x</code>\n\n` +
                                     `Time: <code>${timeStr}</code>\n` +
-                                    `Date: <code>${dateStr}</code>`;
+                                    `Date: <code>${dateStr}</code>\n` +
+                                    `Message: AI Signal Confirmed ✅`;
 
                     const telegramUrl = `https://api.telegram.org/bot${settings.telegramToken}/sendMessage`;
                     const telController = new AbortController();

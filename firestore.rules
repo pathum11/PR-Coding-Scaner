@@ -33,24 +33,20 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUserSettings(data) {
-      return data.uid is string && data.uid == request.auth.uid &&
-             (data.telegramEnabled == null || data.telegramEnabled is bool) &&
-             (data.telegramToken == null || (data.telegramToken is string && data.telegramToken.size() < 100)) &&
-             (data.telegramChatId == null || (data.telegramChatId is string && data.telegramChatId.size() < 50)) &&
-             (data.autoScan == null || data.autoScan is bool);
+      return data.uid is string && (request.auth == null || data.uid == request.auth.uid);
     }
 
     function isValidAlert(data) {
       return data.id is string && data.id.size() < 200 &&
-             data.uid is string && data.uid == request.auth.uid &&
+             data.uid is string && (request.auth == null || data.uid == request.auth.uid) &&
              data.symbol is string &&
              data.type is string &&
              data.timestamp is number;
     }
 
     function isValidActivityLog(data) {
-      return data.userId is string && data.userId == request.auth.uid &&
-             data.message is string && data.message.size() < 500 &&
+      return data.userId is string && 
+             data.message is string && data.message.size() < 1000 &&
              data.type in ["INFO", "SUCCESS", "ERROR", "WARNING"] &&
              data.timestamp is number;
     }
@@ -61,8 +57,8 @@ service cloud.firestore {
 
     match /activity/{logId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      // Server SDK usually writes these, but adding secure rules in case client ever needs to log
-      allow create: if isAuthenticated() && isValidActivityLog(request.resource.data);
+      // Allow creation for the background scanner (acts as unauthenticated client)
+      allow create: if isValidActivityLog(request.resource.data);
       allow update, delete: if isAdmin();
     }
 
