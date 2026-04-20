@@ -587,7 +587,7 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 100));
 
         // Update progress and results after each batch
-        const progress = Math.min(100, Math.round(((i + batch.length) / total) * 100));
+        const progress = total > 0 ? Math.min(100, Math.round(((i + batch.length) / total) * 100)) : 0;
         setScanProgress(progress);
         if (batch.length > 0) {
           setCurrentScanning(batch[batch.length - 1]);
@@ -983,7 +983,7 @@ export default function App() {
                       <label className="text-[10px] uppercase font-bold text-zinc-500">ST Sensitivity</label>
                       <Input 
                         type="number" 
-                        value={stSense} 
+                        value={isNaN(stSense) ? '' : stSense} 
                         onChange={(e) => setStSense(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
@@ -993,7 +993,7 @@ export default function App() {
                       <Input 
                         type="number" 
                         step="0.1"
-                        value={stMult} 
+                        value={isNaN(stMult) ? '' : stMult} 
                         onChange={(e) => setStMult(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
@@ -1002,7 +1002,7 @@ export default function App() {
                       <label className="text-[10px] uppercase font-bold text-zinc-500">RSI Length</label>
                       <Input 
                         type="number" 
-                        value={rsiLen} 
+                        value={isNaN(rsiLen) ? '' : rsiLen} 
                         onChange={(e) => setRsiLen(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
@@ -1011,7 +1011,7 @@ export default function App() {
                       <label className="text-[10px] uppercase font-bold text-zinc-500">RSI Smoothing</label>
                       <Input 
                         type="number" 
-                        value={rsiSm} 
+                        value={isNaN(rsiSm) ? '' : rsiSm} 
                         onChange={(e) => setRsiSm(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
@@ -1021,7 +1021,7 @@ export default function App() {
                       <Input 
                         type="number" 
                         step="0.1"
-                        value={slPct} 
+                        value={isNaN(slPct) ? '' : slPct} 
                         onChange={(e) => setSlPct(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
@@ -1031,7 +1031,7 @@ export default function App() {
                       <Input 
                         type="number" 
                         step="0.1"
-                        value={tpPct} 
+                        value={isNaN(tpPct) ? '' : tpPct} 
                         onChange={(e) => setTpPct(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
@@ -1065,7 +1065,7 @@ export default function App() {
                       <label className="text-[10px] text-zinc-500 uppercase font-bold">Lookback (Mins)</label>
                       <Input 
                         type="number" 
-                        value={scanLookbackMinutes} 
+                        value={isNaN(scanLookbackMinutes) ? '' : scanLookbackMinutes} 
                         onChange={(e) => setScanLookbackMinutes(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-7 text-[10px] font-mono"
                       />
@@ -1270,7 +1270,7 @@ export default function App() {
                       <label className="text-xs font-medium text-zinc-400 uppercase">Amount per Trade (USDT)</label>
                       <Input 
                         type="number" 
-                        value={tradeAmount}
+                        value={isNaN(tradeAmount) ? '' : tradeAmount}
                         onChange={(e) => setTradeAmount(parseFloat(e.target.value))}
                         className="bg-black/40 border-orange-500/20 h-10 text-white focus:border-orange-500/50 font-mono"
                       />
@@ -1279,7 +1279,7 @@ export default function App() {
                       <label className="text-xs font-medium text-zinc-400 uppercase">Max Open Trades</label>
                       <Input 
                         type="number" 
-                        value={maxOpenTrades}
+                        value={isNaN(maxOpenTrades) ? '' : maxOpenTrades}
                         onChange={(e) => setMaxOpenTrades(parseInt(e.target.value))}
                         className="bg-black/40 border-orange-500/20 h-10 text-white focus:border-orange-500/50 font-mono"
                       />
