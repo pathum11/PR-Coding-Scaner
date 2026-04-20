@@ -171,6 +171,40 @@ async function startServer() {
       for (const tf of timeframes) {
         console.log(`Scanner: Processing timeframe ${tf}...`);
         
+        // 1. Get BTC Trend for this timeframe as market context
+        let btcTrend = "UNKNOWN ⚪";
+        try {
+          let btcRaw: any = null;
+          for (const base of endpoints) {
+            try {
+              const res = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=100`);
+              if (res && Array.isArray(res)) {
+                btcRaw = res;
+                break;
+              }
+            } catch (e) {}
+          }
+          if (btcRaw) {
+            const btcCandles = btcRaw.map((d: any) => ({
+              time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
+            }));
+            const btcResults = processIndicators(btcCandles, {
+              stSense: 14, 
+              stMult: 3.0,
+              rsiLen: 14,
+              rsiSm: 14,
+              tpRatio: 2.0,
+              slLookback: 3
+            });
+            const lastBtc = btcResults[btcResults.length - 2]; 
+            if (lastBtc) {
+              btcTrend = lastBtc.trend === "BULLISH" ? "BULLISH 🟢" : "BEARISH 🔴";
+            }
+          }
+        } catch (err) {
+          console.error("Scanner: Failed to fetch BTC Trend context:", err);
+        }
+
         const usersInTf = activeUsers.filter(u => (u.data().timeframe || '5m') === tf);
         
         const batchSize = 10;
@@ -227,14 +261,16 @@ async function startServer() {
                     const dateStr = now.toLocaleDateString('en-GB');
                     const emoji = signalType === "BUY" ? "🟢" : "🔴";
 
-                    const message = `🚀 <b>Signal:</b> <code>${symbol}.P</code>\n` +
+                    const message = `🚀 <b>Signal Alert: ${symbol}.P</b>\n\n` +
+                                    `COPY COIN: <code>${symbol}.P</code>\n\n` +
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
-                                    `Market Price at Alert: <code>${last.close}</code>\n` +
+                                    `BTCUSDT.P Trend: <code>${btcTrend}</code>\n` +
+                                    `Symbol Trend: <code>${last.trend} ${last.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
                                     `Entry Price: <code>${last.close}</code>\n` +
                                     `Take Profit: <code>${last.tpPrice ? Number(last.tpPrice).toFixed(4) : '---'}</code>\n` +
                                     `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
-                                    `Recommended Leverage: <code>${last.recommendedLeverage || '3'}x</code>\n` +
+                                    `Recommended Leverage: <code>${last.recommendedLeverage || '3'}x</code>\n\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>`;
 
