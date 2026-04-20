@@ -267,9 +267,9 @@ export function processIndicators(candles: Candle[], settings: {
       slPrice: currentSlPrice,
       tpPrice: currentTpPrice,
       recommendedLeverage: (() => {
-        if (!currentSlPrice || !candle.close) return null;
+        if (!currentSlPrice || !candle.close) return 7;
         const diff = Math.abs(candle.close - currentSlPrice) / candle.close;
-        if (diff < 0.0001) return null;
+        if (diff < 0.0001) return 7;
         const suggested = Math.floor(0.20 / diff);
         return Math.max(1, Math.min(20, suggested));
       })(),

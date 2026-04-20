@@ -42,7 +42,9 @@ import {
   History,
   Send,
   Globe,
-  Activity
+  Activity,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -129,6 +131,11 @@ export default function App() {
   const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [tradeAmount, setTradeAmount] = useState(0.9); // Fixed $0.90 per trade as requested
   const [maxOpenTrades, setMaxOpenTrades] = useState(3);
+
+  // Field Visibility State
+  const [showTelegramToken, setShowTelegramToken] = useState(false);
+  const [showBinanceKey, setShowBinanceKey] = useState(false);
+  const [showBinanceSecret, setShowBinanceSecret] = useState(false);
 
   // Sync with Firebase
   useEffect(() => {
@@ -612,7 +619,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${currentTF}&limit=500`);
+      const response = await fetchWithRetry(`/api/klines?symbol=${currentSymbol}&interval=${currentTF}&limit=500`);
       if (!response.ok) {
         const errData = await response.json().catch(() => ({ error: 'Unknown server error' }));
         throw new Error(errData.error || `Server error: ${response.status}`);
@@ -647,7 +654,7 @@ export default function App() {
   const fetchBtcTrend = async (currentTF: string) => {
     setBtcTrendLoading(true);
     try {
-      const response = await fetch(`/api/klines?symbol=BTCUSDT&interval=${currentTF}&limit=100`);
+      const response = await fetchWithRetry(`/api/klines?symbol=BTCUSDT&interval=${currentTF}&limit=100`);
       if (response.ok) {
         const data = await response.json();
         const formatted: Candle[] = data.map((d: any) => ({
@@ -1126,13 +1133,22 @@ export default function App() {
 
                       <div className="space-y-2">
                         <label className="text-xs font-medium text-zinc-400 uppercase">Bot Token</label>
-                        <Input 
-                          type="password" 
-                          placeholder="123456789:ABC..." 
-                          value={telegramToken}
-                          onChange={(e) => setTelegramToken(e.target.value)}
-                          className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
-                        />
+                        <div className="relative">
+                          <Input 
+                            type={showTelegramToken ? "text" : "password"} 
+                            placeholder="123456789:ABC..." 
+                            value={telegramToken}
+                            onChange={(e) => setTelegramToken(e.target.value)}
+                            className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50 pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowTelegramToken(!showTelegramToken)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-orange-500 transition-colors"
+                          >
+                            {showTelegramToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs font-medium text-zinc-400 uppercase">Chat ID</label>
@@ -1248,21 +1264,39 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-xs font-medium text-zinc-400 uppercase">Binance API Key (Futures)</label>
-                      <Input 
-                        type="password" 
-                        value={binanceKey}
-                        onChange={(e) => setBinanceKey(e.target.value)}
-                        className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
-                      />
+                      <div className="relative">
+                        <Input 
+                          type={showBinanceKey ? "text" : "password"} 
+                          value={binanceKey}
+                          onChange={(e) => setBinanceKey(e.target.value)}
+                          className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50 pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowBinanceKey(!showBinanceKey)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-orange-500 transition-colors"
+                        >
+                          {showBinanceKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-medium text-zinc-400 uppercase">Binance Secret Key</label>
-                      <Input 
-                        type="password" 
-                        value={binanceSecret}
-                        onChange={(e) => setBinanceSecret(e.target.value)}
-                        className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
-                      />
+                      <div className="relative">
+                        <Input 
+                          type={showBinanceSecret ? "text" : "password"} 
+                          value={binanceSecret}
+                          onChange={(e) => setBinanceSecret(e.target.value)}
+                          className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50 pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowBinanceSecret(!showBinanceSecret)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-orange-500 transition-colors"
+                        >
+                          {showBinanceSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
 

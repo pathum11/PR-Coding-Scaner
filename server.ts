@@ -64,6 +64,12 @@ async function startServer() {
 
   // Background Scanner Logic
   const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'CRVUSDT', 'SUSHIUSDT'];
+  const BINANCE_ENDPOINTS = [
+    'https://fapi.binance.com',
+    'https://fapi1.binance.com',
+    'https://fapi2.binance.com',
+    'https://fapi3.binance.com'
+  ];
   
   const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string) => {
     const baseUrl = "https://fapi.binance.com";
@@ -87,7 +93,7 @@ async function startServer() {
     try {
       // 0. Get Symbol Rules (IMPORTANT for Filter Failures)
       let symInfo: any = null;
-      for (const base of endpoints) {
+      for (const base of BINANCE_ENDPOINTS) {
         try {
           const res = await fetch(`${base}/fapi/v1/exchangeInfo`).then(r => r.json());
           symInfo = res.symbols.find((s: any) => s.symbol === symbol);
@@ -226,15 +232,8 @@ async function startServer() {
 
     try {
       // 1. Fetch symbols from Binance (Use multi-endpoint for robustness)
-      const endpoints = [
-        'https://fapi.binance.com',
-        'https://fapi1.binance.com',
-        'https://fapi2.binance.com',
-        'https://fapi3.binance.com'
-      ];
-      
       let exchangeData: any = null;
-      for (const base of endpoints) {
+      for (const base of BINANCE_ENDPOINTS) {
         try {
           const exchangeRes = await fetch(`${base}/fapi/v1/exchangeInfo`, {
             headers: { 
@@ -300,7 +299,7 @@ async function startServer() {
         let btcTrend = "UNKNOWN ⚪";
         try {
           let btcRaw: any = null;
-          for (const base of endpoints) {
+          for (const base of BINANCE_ENDPOINTS) {
             try {
               const res = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=100`);
               if (res && Array.isArray(res)) {
@@ -338,7 +337,7 @@ async function startServer() {
           await Promise.all(batch.map(async (symbol) => {
             try {
               let data: any = null;
-              for (const base of endpoints) {
+              for (const base of BINANCE_ENDPOINTS) {
                 try {
                   data = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${tf}&limit=500`);
                   if (data && Array.isArray(data)) break;
@@ -405,7 +404,7 @@ async function startServer() {
                                     `Entry Price: <code>${last.close}</code>\n` +
                                     `Take Profit: <code>${last.tpPrice ? Number(last.tpPrice).toFixed(4) : '---'}</code>\n` +
                                     `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
-                                    `Recommended Leverage: <code>${last.recommendedLeverage || '3'}x</code>\n\n` +
+                                    `Recommended Leverage: <code>${last.recommendedLeverage || '7'}x</code>\n\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>`;
 
@@ -451,7 +450,7 @@ async function startServer() {
                         settings.tradeAmount || 10, 
                         last.tpPrice, 
                         last.slPrice, 
-                        last.recommendedLeverage || 3, 
+                        last.recommendedLeverage || 7, 
                         settings.binanceKey, 
                         settings.binanceSecret
                       );
@@ -520,18 +519,11 @@ async function startServer() {
       return res.status(400).json({ error: "Symbol and interval are required" });
     }
 
-    const endpoints = [
-      'https://fapi.binance.com',
-      'https://fapi1.binance.com',
-      'https://fapi2.binance.com',
-      'https://fapi3.binance.com'
-    ];
-
     let lastError: any = null;
     
-    for (const base of endpoints) {
+    for (const base of BINANCE_ENDPOINTS) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000); // Increased 15s timeout
+      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
       try {
         const url = `${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol as string)}&interval=${interval}&limit=${limit || 500}`;
@@ -566,19 +558,12 @@ async function startServer() {
 
   // Binance Exchange Info Proxy
   app.get("/api/exchangeInfo", async (req, res) => {
-    const endpoints = [
-      'https://fapi.binance.com',
-      'https://fapi1.binance.com',
-      'https://fapi2.binance.com',
-      'https://fapi3.binance.com'
-    ];
-    
     let lastError = "Failed to fetch exchange info from all Binance endpoints";
     let lastStatus = 500;
 
-    for (const base of endpoints) {
+    for (const base of BINANCE_ENDPOINTS) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
       try {
         const response = await fetch(`${base}/fapi/v1/exchangeInfo`, {
