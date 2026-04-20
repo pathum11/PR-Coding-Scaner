@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { processIndicators } from "./src/lib/indicators";
+import crypto from "crypto";
 
 import fs from "fs";
 import dotenv from "dotenv";
@@ -64,6 +65,95 @@ async function startServer() {
   // Background Scanner Logic
   const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'CRVUSDT', 'SUSHIUSDT'];
   
+  const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string) => {
+    const baseUrl = "https://fapi.binance.com";
+    const timestamp = Date.now();
+    
+    // Fixed amount as per user request: 0.9 USDT
+    const tradeMargin = 0.9;
+
+    const sign = (queryString: string) => crypto.createHmac('sha256', apiSecret).update(queryString).digest('hex');
+
+    const apiCall = async (path: string, method: string, params: any) => {
+      const ts = Date.now();
+      const queryString = new URLSearchParams({ ...params, timestamp: ts.toString() }).toString();
+      const signature = sign(queryString);
+      const url = `${baseUrl}${path}?${queryString}&signature=${signature}`;
+      return fetch(url, {
+        method,
+        headers: { 'X-MBX-APIKEY': apiKey }
+      }).then(r => r.json());
+    };
+
+    try {
+      // 0. Check for existing position (Rule 1: No multiple trades for same symbol)
+      const positions = await apiCall("/fapi/v2/positionRisk", "GET", { symbol });
+      if (Array.isArray(positions)) {
+        const activePos = positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0);
+        if (activePos) {
+          console.log(`AutoTrade: Skipped ${symbol} - Position already exists.`);
+          return;
+        }
+      }
+
+      // 0.1 Check Wallet Balance (Rule 3: Ensure funds exist)
+      const balanceRes = await apiCall("/fapi/v2/balance", "GET", {});
+      if (Array.isArray(balanceRes)) {
+        const usdtBal = balanceRes.find(b => b.asset === "USDT");
+        if (!usdtBal || parseFloat(usdtBal.availableBalance) < tradeMargin) {
+          console.log(`AutoTrade: Skipped ${symbol} - Insufficient balance (Available: ${usdtBal?.availableBalance || 0} USDT)`);
+          return;
+        }
+      }
+
+      // 1. Set Leverage
+      await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: leverage.toString() });
+
+      // 2. Market Order (Rule 2: Use 0.9 USDT)
+      const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
+      const currentPrice = parseFloat(priceRes.price);
+      
+      // qty = (Margin * Leverage) / Price
+      let qty = ((tradeMargin * leverage) / currentPrice).toFixed(3); 
+      
+      const order = await apiCall("/fapi/v1/order", "POST", {
+        symbol,
+        side,
+        type: "MARKET",
+        quantity: qty
+      });
+
+      if (order.orderId) {
+        console.log(`AutoTrade: [ENTRY] ${symbol} ${side} @ ${currentPrice} with ${tradeMargin} USDT margin`);
+        
+        // 3. Take Profit
+        const tpSide = side === "BUY" ? "SELL" : "BUY";
+        await apiCall("/fapi/v1/order", "POST", {
+          symbol,
+          side: tpSide,
+          type: "TAKE_PROFIT_MARKET",
+          stopPrice: tp.toFixed(4),
+          closePosition: "true",
+          timeInForce: "GTC"
+        });
+
+        // 4. Stop Loss
+        await apiCall("/fapi/v1/order", "POST", {
+          symbol,
+          side: tpSide,
+          type: "STOP_MARKET",
+          stopPrice: sl.toFixed(4),
+          closePosition: "true",
+          timeInForce: "GTC"
+        });
+      } else if (order.msg) {
+         console.error(`AutoTrade: Binance rejected order for ${symbol}: ${order.msg}`);
+      }
+    } catch (e) {
+      console.error(`AutoTrade Error for ${symbol}:`, e);
+    }
+  };
+
   const fetchWithRetry = async (url: string, retries = 3, backoff = 1000): Promise<any> => {
     try {
       const response = await fetch(url, { 
@@ -316,6 +406,21 @@ async function startServer() {
                       uid: userDoc.id,
                       sentAt: Date.now()
                     });
+
+                    // EXECUTE AUTO-TRADE
+                    if (settings.autoTradeEnabled && settings.binanceKey && settings.binanceSecret) {
+                      console.log(`AutoTrade: Initiating trade for User ${userDoc.id} on ${symbol}`);
+                      executeBinanceTrade(
+                        symbol, 
+                        signalType as "BUY" | "SELL", 
+                        settings.tradeAmount || 10, 
+                        last.tpPrice, 
+                        last.slPrice, 
+                        last.recommendedLeverage || 3, 
+                        settings.binanceKey, 
+                        settings.binanceSecret
+                      );
+                    }
                   }
                 }
               }

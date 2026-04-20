@@ -20,7 +20,12 @@
         "zigzagLength": { "type": "number" },
         "tpRatio": { "type": "number" },
         "slLookback": { "type": "number" },
-        "scanLookbackMinutes": { "type": "number" }
+        "scanLookbackMinutes": { "type": "number" },
+        "binanceKey": { "type": "string" },
+        "binanceSecret": { "type": "string" },
+        "autoTradeEnabled": { "type": "boolean" },
+        "tradeAmount": { "type": "number" },
+        "maxOpenTrades": { "type": "number" }
       },
       "required": ["uid"]
     },

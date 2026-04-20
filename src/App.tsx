@@ -123,6 +123,13 @@ export default function App() {
   const [pushEnabled, setPushEnabled] = useState(() => localStorage.getItem('pushEnabled') === 'true');
   const [timeframe, setTimeframe] = useState(() => localStorage.getItem('selectedTimeframe') || '5m');
 
+  // Binance Auto-Trade Settings
+  const [binanceKey, setBinanceKey] = useState('');
+  const [binanceSecret, setBinanceSecret] = useState('');
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
+  const [tradeAmount, setTradeAmount] = useState(0.9); // Fixed $0.90 per trade as requested
+  const [maxOpenTrades, setMaxOpenTrades] = useState(3);
+
   // Sync with Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -146,6 +153,11 @@ export default function App() {
             if (data.rsiSm !== undefined) setRsiSm(data.rsiSm);
             if (data.slPct !== undefined) setSlPct(data.slPct);
             if (data.tpPct !== undefined) setTpPct(data.tpPct);
+            if (data.binanceKey) setBinanceKey(data.binanceKey);
+            if (data.binanceSecret) setBinanceSecret(data.binanceSecret);
+            if (data.autoTradeEnabled !== undefined) setAutoTradeEnabled(data.autoTradeEnabled);
+            if (data.tradeAmount !== undefined) setTradeAmount(data.tradeAmount);
+            if (data.maxOpenTrades !== undefined) setMaxOpenTrades(data.maxOpenTrades);
             if (data.scanLookbackMinutes !== undefined) setScanLookbackMinutes(data.scanLookbackMinutes);
             else if (data.scanLookbackHours !== undefined) setScanLookbackMinutes(data.scanLookbackHours * 60);
           }
@@ -172,6 +184,11 @@ export default function App() {
         rsiSm,
         slPct,
         tpPct,
+        binanceKey,
+        binanceSecret,
+        autoTradeEnabled,
+        tradeAmount,
+        maxOpenTrades,
         scanLookbackMinutes,
         updatedAt: Date.now()
       }, { merge: true });
@@ -189,7 +206,8 @@ export default function App() {
     }
   }, [
     telegramEnabled, telegramToken, telegramChatId, autoScan, soundEnabled, timeframe,
-    stSense, stMult, rsiLen, rsiSm, slPct, tpPct, scanLookbackMinutes, user
+    stSense, stMult, rsiLen, rsiSm, slPct, tpPct, scanLookbackMinutes,
+    binanceKey, binanceSecret, autoTradeEnabled, tradeAmount, maxOpenTrades, user
   ]);
 
   const login = async () => {
@@ -1188,7 +1206,7 @@ export default function App() {
                       onClick={testTelegram}
                       disabled={scanning}
                     >
-                      {scanning ? 'Testing...' : 'Test Connection'}
+                      {scanning ? 'Testing...' : 'Test Telegram'}
                     </Button>
                     <Button 
                       className="bg-orange-500 hover:bg-orange-600 text-white font-bold h-10 rounded-xl px-8"
@@ -1196,6 +1214,88 @@ export default function App() {
                     >
                       Save Settings
                     </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-orange-950/20 border-orange-500/20 backdrop-blur-sm shadow-2xl mt-6">
+                <CardHeader className="border-b border-orange-500/10 bg-orange-500/[0.02]">
+                  <CardTitle className="text-lg font-bold flex items-center gap-2 text-white">
+                    <Zap className="w-5 h-5 text-orange-500" /> Binance Futures Auto-Trading
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6 space-y-6">
+                  <div className="flex items-center justify-between p-4 bg-orange-500/5 rounded-xl border border-orange-500/10">
+                    <div className="flex items-center gap-2">
+                      <Zap className={cn("w-4 h-4", autoTradeEnabled ? "text-orange-500" : "text-zinc-500")} />
+                      <span className="text-sm border-zinc-100 font-bold">Autonomous Execution</span>
+                    </div>
+                    <button 
+                      onClick={() => setAutoTradeEnabled(!autoTradeEnabled)}
+                      className={cn(
+                        "w-10 h-5 rounded-full transition-colors relative",
+                        autoTradeEnabled ? "bg-orange-500" : "bg-zinc-800"
+                      )}
+                    >
+                      <div className={cn(
+                        "absolute top-1 w-3 h-3 bg-white rounded-full transition-transform",
+                        autoTradeEnabled ? "translate-x-6" : "translate-x-1"
+                      )} />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-400 uppercase">Binance API Key (Futures)</label>
+                      <Input 
+                        type="password" 
+                        value={binanceKey}
+                        onChange={(e) => setBinanceKey(e.target.value)}
+                        className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-400 uppercase">Binance Secret Key</label>
+                      <Input 
+                        type="password" 
+                        value={binanceSecret}
+                        onChange={(e) => setBinanceSecret(e.target.value)}
+                        className="bg-black/40 border-orange-500/20 h-10 text-white placeholder:text-zinc-600 focus:border-orange-500/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-400 uppercase">Amount per Trade (USDT)</label>
+                      <Input 
+                        type="number" 
+                        value={tradeAmount}
+                        onChange={(e) => setTradeAmount(parseFloat(e.target.value))}
+                        className="bg-black/40 border-orange-500/20 h-10 text-white focus:border-orange-500/50 font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-400 uppercase">Max Open Trades</label>
+                      <Input 
+                        type="number" 
+                        value={maxOpenTrades}
+                        onChange={(e) => setMaxOpenTrades(parseInt(e.target.value))}
+                        className="bg-black/40 border-orange-500/20 h-10 text-white focus:border-orange-500/50 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-black/40 rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-zinc-100 flex items-center gap-2 mb-2">
+                      <Info className="w-3 h-3 text-orange-500" /> Auto-Trade Safety
+                    </h4>
+                    <ul className="text-[10px] text-zinc-500 space-y-1 list-disc pl-4 leading-relaxed">
+                      <li>Ensure API keys have <span className="text-orange-400 font-bold">"Enable Futures"</span> checked.</li>
+                      <li>Strategy uses Market Orders for entry, TP, and SL.</li>
+                      <li>Keys are only used on the server side (Cloud Scanner).</li>
+                      <li>Recommended leverage is applied automatically.</li>
+                    </ul>
                   </div>
                 </CardContent>
               </Card>
