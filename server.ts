@@ -67,7 +67,6 @@ async function startServer() {
   
   const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string) => {
     const baseUrl = "https://fapi.binance.com";
-    const timestamp = Date.now();
     
     // Fixed amount as per user request: 0.9 USDT
     const tradeMargin = 0.9;
@@ -86,7 +85,38 @@ async function startServer() {
     };
 
     try {
-      // 0. Check for existing position (Rule 1: No multiple trades for same symbol)
+      // 0. Get Symbol Rules (IMPORTANT for Filter Failures)
+      let symInfo: any = null;
+      for (const base of endpoints) {
+        try {
+          const res = await fetch(`${base}/fapi/v1/exchangeInfo`).then(r => r.json());
+          symInfo = res.symbols.find((s: any) => s.symbol === symbol);
+          if (symInfo) break;
+        } catch (e) {}
+      }
+
+      if (!symInfo) {
+        console.error(`AutoTrade: Error fetching rules for ${symbol}`);
+        return;
+      }
+
+      const priceFilter = symInfo.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
+      const lotFilter = symInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');
+      
+      const tickSize = parseFloat(priceFilter.tickSize);
+      const stepSize = parseFloat(lotFilter.stepSize);
+
+      const formatPrice = (p: number) => {
+        const precision = Math.max(0, Math.round(-Math.log10(tickSize)));
+        return p.toFixed(precision);
+      };
+
+      const formatQty = (q: number) => {
+        const precision = Math.max(0, Math.round(-Math.log10(stepSize)));
+        return q.toFixed(precision);
+      };
+
+      // 0. Check for existing position
       const positions = await apiCall("/fapi/v2/positionRisk", "GET", { symbol });
       if (Array.isArray(positions)) {
         const activePos = positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0);
@@ -96,12 +126,12 @@ async function startServer() {
         }
       }
 
-      // 0.1 Check Wallet Balance (Rule 3: Ensure funds exist)
+      // 0.1 Check Wallet Balance
       const balanceRes = await apiCall("/fapi/v2/balance", "GET", {});
       if (Array.isArray(balanceRes)) {
         const usdtBal = balanceRes.find(b => b.asset === "USDT");
         if (!usdtBal || parseFloat(usdtBal.availableBalance) < tradeMargin) {
-          console.log(`AutoTrade: Skipped ${symbol} - Insufficient balance (Available: ${usdtBal?.availableBalance || 0} USDT)`);
+          console.log(`AutoTrade: Skipped ${symbol} - Insufficient balance (${usdtBal?.availableBalance || 0} USDT)`);
           return;
         }
       }
@@ -109,12 +139,11 @@ async function startServer() {
       // 1. Set Leverage
       await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: leverage.toString() });
 
-      // 2. Market Order (Rule 2: Use 0.9 USDT)
+      // 2. Market Order
       const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
       const currentPrice = parseFloat(priceRes.price);
       
-      // qty = (Margin * Leverage) / Price
-      let qty = ((tradeMargin * leverage) / currentPrice).toFixed(3); 
+      let qty = formatQty((tradeMargin * leverage) / currentPrice); 
       
       const order = await apiCall("/fapi/v1/order", "POST", {
         symbol,
@@ -124,33 +153,38 @@ async function startServer() {
       });
 
       if (order.orderId) {
-        console.log(`AutoTrade: [ENTRY] ${symbol} ${side} @ ${currentPrice} with ${tradeMargin} USDT margin`);
+        console.log(`AutoTrade: [ENTRY] ${symbol} ${side} @ ${currentPrice}`);
         
         // 3. Take Profit
         const tpSide = side === "BUY" ? "SELL" : "BUY";
-        await apiCall("/fapi/v1/order", "POST", {
+        const tpOrder = await apiCall("/fapi/v1/order", "POST", {
           symbol,
           side: tpSide,
           type: "TAKE_PROFIT_MARKET",
-          stopPrice: tp.toFixed(4),
+          stopPrice: formatPrice(tp),
           closePosition: "true",
           timeInForce: "GTC"
         });
 
+        if (tpOrder.orderId) console.log(`AutoTrade: [TP SET] ${symbol} @ ${formatPrice(tp)}`);
+
         // 4. Stop Loss
-        await apiCall("/fapi/v1/order", "POST", {
+        const slOrder = await apiCall("/fapi/v1/order", "POST", {
           symbol,
           side: tpSide,
           type: "STOP_MARKET",
-          stopPrice: sl.toFixed(4),
+          stopPrice: formatPrice(sl),
           closePosition: "true",
           timeInForce: "GTC"
         });
-      } else if (order.msg) {
-         console.error(`AutoTrade: Binance rejected order for ${symbol}: ${order.msg}`);
+        
+        if (slOrder.orderId) console.log(`AutoTrade: [SL SET] ${symbol} @ ${formatPrice(sl)}`);
+
+      } else {
+        console.error(`AutoTrade: Entry Order Failed for ${symbol}:`, order.msg || JSON.stringify(order));
       }
-    } catch (e) {
-      console.error(`AutoTrade Error for ${symbol}:`, e);
+    } catch (e: any) {
+      console.error(`AutoTrade: Execution Error for ${symbol}:`, e.message);
     }
   };
 
@@ -248,7 +282,8 @@ async function startServer() {
 
       const activeUsers = usersSnap.docs.filter((doc: any) => {
         const data = doc.data();
-        return data.autoScan === true && data.telegramEnabled === true && data.telegramToken && data.telegramChatId;
+        // Allow auto-trade even if telegram is disabled, as long as SCAN is on
+        return data.autoScan === true;
       });
       const activeUsersCount = activeUsers.length;
       console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started for ${allSymbols.length} symbols. Active Users: ${activeUsersCount}`);
@@ -464,7 +499,13 @@ async function startServer() {
 
       clearTimeout(timeout);
       const data = await response.json();
-      res.status(response.status).json(data);
+      if (!response.ok) {
+        return res.status(response.status).json({ 
+          error: data.description || `Telegram Error (${response.status})`,
+          details: data 
+        });
+      }
+      res.json(data);
     } catch (error: any) {
       clearTimeout(timeout);
       console.error("Telegram Proxy Error:", error.name === 'AbortError' ? 'Request Timed Out' : error.message);

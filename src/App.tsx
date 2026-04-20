@@ -262,8 +262,9 @@ export default function App() {
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Connection failed' }));
+        const errorMessage = errorData.error || errorData.description || 'Failed to send message';
         console.error('Telegram Proxy Error:', errorData);
-        throw new Error(errorData.error || 'Failed to send message');
+        throw new Error(errorMessage);
       }
     } catch (e: any) {
       console.error('Telegram Error:', e);
