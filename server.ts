@@ -193,8 +193,8 @@ async function startServer() {
               stMult: 3.0,
               rsiLen: 14,
               rsiSm: 14,
-              slPct: 0.9,
-              tpPct: 1.8
+              slPct: 2.8,
+              tpPct: 3.6
             });
             const lastBtc = btcResults[btcResults.length - 2]; 
             if (lastBtc) {
@@ -237,17 +237,27 @@ async function startServer() {
                   stMult: settings.stMult || 3.0,
                   rsiLen: settings.rsiLen || 14,
                   rsiSm: settings.rsiSm || 14,
-                  slPct: settings.slPct || 0.9,
-                  tpPct: settings.tpPct || 1.8
+                  slPct: settings.slPct || 2.8,
+                  tpPct: settings.tpPct || 3.6
                 });
 
                 // Check the last closed candle
                 const last = results[results.length - 2];
                 if (!last) continue;
 
+                // FILTER: Market Price < 0.9 USDT
+                if (last.close >= 0.9) continue;
+
                 const isBuy = last.buySignal;
                 const isSell = last.sellSignal;
-                const signalType = isBuy ? "BUY" : (isSell ? "SELL" : "");
+                
+                // FILTER: Align with BTC Trend
+                const isBtcBullish = btcTrend.startsWith("BULLISH");
+                const isBtcBearish = btcTrend.startsWith("BEARISH");
+
+                let signalType = "";
+                if (isBuy && isBtcBullish) signalType = "BUY";
+                if (isSell && isBtcBearish) signalType = "SELL";
 
                 if (signalType) {
                   const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalType}`;

@@ -88,8 +88,12 @@ export default function App() {
   const [stMult, setStMult] = useState(3.0);
   const [rsiLen, setRsiLen] = useState(14);
   const [rsiSm, setRsiSm] = useState(14);
-  const [slPct, setSlPct] = useState(0.9);
-  const [tpPct, setTpPct] = useState(1.8);
+  const [slPct, setSlPct] = useState(2.8);
+  const [tpPct, setTpPct] = useState(3.6);
+  
+  // BTC Trend State
+  const [btcTrend, setBtcTrend] = useState<{ trend: string, signal?: string } | null>(null);
+  const [btcTrendLoading, setBtcTrendLoading] = useState(false);
 
   // Scanner State
   const [scanResults, setScanResults] = useState<any[]>([]);
@@ -323,9 +327,21 @@ export default function App() {
             });
 
             // Send Phone Notifications
-            const tpText = alert.tp ? `\nTake Profit: ${alert.tp}` : '';
-            const slText = alert.sl ? `\nStop Loss: ${alert.sl}` : '';
-            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}.P</b>\nType: ${alert.type}${tpText}${slText}\nTime: ${newNotification.time}\nMessage: ${newNotification.message}`;
+            const emoji = alert.type === "BUY" ? "🟢" : "🔴";
+            const btcTrendText = btcTrend ? `${btcTrend.trend} ${btcTrend.trend === 'BULLISH' ? '🟢' : '🔴'}` : 'SYNCING...';
+            
+            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}.P</b>\n\n` +
+                            `COPY COIN: <code>${alert.symbol}.P</code>\n\n` +
+                            `Type: <code>${alert.type} ${emoji}</code>\n` +
+                            `Timeframe: <code>${timeframe}</code>\n` +
+                            `BTCUSDT.P Trend: <code>${btcTrendText}</code>\n` +
+                            `Symbol Trend: <code>${alert.trend || 'N/A'} ${alert.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
+                            `Take Profit: <code>${alert.tp ? Number(alert.tp).toFixed(4) : '---'}</code>\n` +
+                            `Stop Loss: <code>${alert.sl ? Number(alert.sl).toFixed(4) : '---'}</code>\n` +
+                            `Recommended Leverage: <code>${alert.leverage || '3'}x</code>\n\n` +
+                            `Time: <code>${newNotification.time}</code>\n` +
+                            `Message: AI Signal Confirmed ✅`;
+
             sendTelegramMessage(phoneMsg);
             showPushNotification(`Signal Alert: ${alert.symbol}.P`, `${alert.type} signal reached!`);
             
@@ -369,8 +385,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoScan, scanning, lastScanTime]);
 
-  const addAlert = (symbol: string, type: string, signalTime: number, tp?: number, sl?: number) => {
-    const alertTime = signalTime + (30 * 60 * 1000); // 30 minutes later
+  const addAlert = (symbol: string, type: string, signalTime: number, tp?: number, sl?: number, trend?: string, leverage?: number) => {
+    const alertTime = signalTime; // Trigger immediately when scanned
     const id = `${symbol}-${signalTime}`;
     
     setAlerts(prev => {
@@ -383,6 +399,8 @@ export default function App() {
         alertTime,
         tp,
         sl,
+        trend,
+        leverage,
         triggered: false
       }];
     });
@@ -492,15 +510,23 @@ export default function App() {
             const lookbackLimit = now - lookbackMs;
             
             // Find the most recent signal within the lookback window
+            // Start from j = length - 2 to ensure we only look at CLOSED candles
             let foundSignal = null;
-            for (let j = processed.length - 1; j >= 0; j--) {
+            for (let j = processed.length - 2; j >= 0; j--) {
               const candle = processed[j];
               if (candle.time < lookbackLimit) break;
               
+              // FILTER: Market Price < 0.9 USDT
+              if (candle.close >= 0.9) continue;
+
               const isBuy = candle.buySignal;
               const isSell = candle.sellSignal;
               
-              if (isBuy || isSell) {
+              // FILTER: Align with BTC Trend
+              const isBtcBullish = btcTrend?.trend === 'BULLISH';
+              const isBtcBearish = btcTrend?.trend === 'BEARISH';
+
+              if ((isBuy && isBtcBullish) || (isSell && isBtcBearish)) {
                 foundSignal = {
                   candle,
                   type: isBuy ? 'BUY' : 'SELL' as 'BUY' | 'SELL',
@@ -520,6 +546,7 @@ export default function App() {
                 price: candle.close,
                 tpPrice: candle.tpPrice,
                 slPrice: candle.slPrice,
+                recommendedLeverage: candle.recommendedLeverage,
                 time: candle.time,
                 scanTime: Date.now()
               };
@@ -530,7 +557,7 @@ export default function App() {
               }
               
               if (autoAlert) {
-                addAlert(s, signalData.type, candle.time, signalData.tpPrice, signalData.slPrice);
+                addAlert(s, signalData.type, candle.time, signalData.tpPrice, signalData.slPrice, candle.trend, signalData.recommendedLeverage);
               }
             }
           } catch (e) {
@@ -590,9 +617,45 @@ export default function App() {
 
   useEffect(() => {
     fetchData(symbol, timeframe);
-    const interval = setInterval(() => fetchData(symbol, timeframe), 60000); // Refresh every minute
+    fetchBtcTrend(timeframe);
+    const interval = setInterval(() => {
+      fetchData(symbol, timeframe);
+      fetchBtcTrend(timeframe);
+    }, 60000); // Refresh every minute
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
+
+  const fetchBtcTrend = async (currentTF: string) => {
+    setBtcTrendLoading(true);
+    try {
+      const response = await fetch(`/api/klines?symbol=BTCUSDT&interval=${currentTF}&limit=100`);
+      if (response.ok) {
+        const data = await response.json();
+        const formatted: Candle[] = data.map((d: any) => ({
+          time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
+        }));
+        const results = processIndicators(formatted, {
+          stSense: 14, 
+          stMult: 3.0,
+          rsiLen: 14,
+          rsiSm: 14,
+          slPct: 2.8,
+          tpPct: 3.6
+        });
+        const last = results[results.length - 1];
+        if (last) {
+          setBtcTrend({
+            trend: last.trend,
+            signal: last.buySignal ? 'BUY' : (last.sellSignal ? 'SELL' : undefined)
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch BTC trend:", e);
+    } finally {
+      setBtcTrendLoading(false);
+    }
+  };
 
   const processedData = useMemo(() => {
     if (candles.length === 0) return [];
@@ -669,6 +732,47 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* BTC Trend Bar */}
+      <div className="bg-orange-500/5 border-b border-orange-500/10 py-2">
+        <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
+          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-orange-500/20 whitespace-nowrap">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tighter">BTC Market Context</span>
+              {btcTrendLoading ? (
+                <div className="w-12 h-3 bg-zinc-800 animate-pulse rounded" />
+              ) : btcTrend ? (
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-black italic uppercase ${btcTrend.trend === 'BULLISH' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    BTCUSDT.P: {btcTrend.trend} {btcTrend.trend === 'BULLISH' ? '🟢' : '🔴'}
+                  </span>
+                  {btcTrend.signal && (
+                    <Badge className={`${btcTrend.signal === 'BUY' ? 'bg-emerald-500' : 'bg-rose-500'} text-black border-none text-[8px] h-4 font-black italic uppercase animate-pulse`}>
+                      {btcTrend.signal} ACTIVE
+                    </Badge>
+                  )}
+                </div>
+              ) : (
+                <span className="text-[10px] text-zinc-600">Syncing Data...</span>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-3 border-l border-white/10 pl-4">
+              <span className="text-[10px] text-zinc-500 uppercase font-medium">Session TF:</span>
+              <Badge variant="outline" className="bg-orange-500/10 border-orange-500/20 text-orange-500 h-5 text-[10px] uppercase font-black italic">
+                {timeframe}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="hidden md:flex items-center gap-4">
+             <div className="flex items-center gap-1.5 grayscale opacity-50">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Binance Data Feed</span>
+             </div>
+          </div>
+        </div>
+      </div>
 
       <main className="max-w-7xl mx-auto p-4 lg:p-6 space-y-6">
         {error && (
