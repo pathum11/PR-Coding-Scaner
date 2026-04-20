@@ -512,6 +512,47 @@ async function startServer() {
     }
   });
 
+  // Binance Connection Check Proxy
+  app.post("/api/binance/check", async (req, res) => {
+    const { apiKey, apiSecret } = req.body;
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({ error: "API Key and Secret are required" });
+    }
+
+    try {
+      const baseUrl = "https://fapi.binance.com";
+      const sign = (queryString: string) => crypto.createHmac('sha256', apiSecret).update(queryString).digest('hex');
+      const ts = Date.now();
+      const queryString = `timestamp=${ts}`;
+      const signature = sign(queryString);
+      const url = `${baseUrl}/fapi/v2/account?${queryString}&signature=${signature}`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'X-MBX-APIKEY': apiKey }
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json({ 
+          error: data.msg || `Binance Error (${response.status})`,
+          details: data 
+        });
+      }
+      res.json({ 
+        success: true, 
+        accountType: data.accountType, 
+        canTrade: data.canTrade,
+        canWithdraw: data.canWithdraw,
+        canDeposit: data.canDeposit,
+        feeTier: data.feeTier
+      });
+    } catch (error: any) {
+      console.error("Binance Check Error:", error.message);
+      res.status(500).json({ error: "Failed to connect to Binance API" });
+    }
+  });
+
   // Binance Klines Proxy
   app.get("/api/klines", async (req, res) => {
     const { symbol, interval, limit } = req.query;

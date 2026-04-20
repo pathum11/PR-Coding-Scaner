@@ -136,6 +136,7 @@ export default function App() {
   const [showTelegramToken, setShowTelegramToken] = useState(false);
   const [showBinanceKey, setShowBinanceKey] = useState(false);
   const [showBinanceSecret, setShowBinanceSecret] = useState(false);
+  const [checkingBinance, setCheckingBinance] = useState(false);
 
   // Sync with Firebase
   useEffect(() => {
@@ -302,6 +303,37 @@ export default function App() {
       setError('Failed to send test message. Check your token and chat ID.');
     } finally {
       setScanning(false);
+    }
+  };
+
+  const testBinanceConnection = async () => {
+    if (!binanceKey || !binanceSecret) {
+      setError('Please enter both Binance API Key and Secret to test.');
+      return;
+    }
+    setCheckingBinance(true);
+    try {
+      const res = await fetch('/api/binance/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: binanceKey, apiSecret: binanceSecret })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNotifications(prev => [{
+          id: Date.now(),
+          symbol: 'BINANCE',
+          type: 'BUY',
+          message: `Successfully connected! (Status: ${data.canTrade ? 'Trading Active' : 'Read Only'})`,
+          time: Date.now()
+        }, ...prev]);
+      } else {
+        setError(`Binance Connection Failed: ${data.error}`);
+      }
+    } catch (e) {
+      setError('Failed to reach Binance API. Check your keys or network.');
+    } finally {
+      setCheckingBinance(false);
     }
   };
 
@@ -1332,6 +1364,23 @@ export default function App() {
                       <li>Recommended leverage is applied automatically.</li>
                     </ul>
                   </div>
+
+                  <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                    <Button 
+                      variant="outline"
+                      className="border-zinc-800 hover:bg-zinc-800 text-zinc-400 h-10 rounded-xl"
+                      onClick={testBinanceConnection}
+                      disabled={checkingBinance}
+                    >
+                      {checkingBinance ? 'Verifying...' : 'Verify Binance Connection'}
+                    </Button>
+                    <Button 
+                      className="bg-orange-500 hover:bg-orange-600 text-white font-bold h-10 rounded-xl px-8"
+                      onClick={saveSettingsToFirebase}
+                    >
+                      Save API Keys
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -1343,10 +1392,22 @@ export default function App() {
                      <Send className="w-3 h-3" /> Notifications
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="p-4">
+                <CardContent className="p-4 space-y-4">
                    <div className="flex items-center justify-between">
                       <span className="text-xs text-zinc-400">Telegram Status</span>
                       <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/5 text-[10px]">Active</Badge>
+                   </div>
+                   <div className="flex items-center justify-between">
+                      <span className="text-xs text-zinc-400">Binance API</span>
+                      <Badge 
+                        variant="outline" 
+                        className={cn(
+                          "text-[10px]",
+                          binanceKey && binanceSecret ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/5" : "border-zinc-500/30 text-zinc-500 bg-zinc-500/5"
+                        )}
+                      >
+                        {binanceKey && binanceSecret ? "Connected" : "Not Linked"}
+                      </Badge>
                    </div>
                 </CardContent>
               </Card>
