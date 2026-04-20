@@ -74,8 +74,8 @@ async function startServer() {
   const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string) => {
     const baseUrl = "https://fapi.binance.com";
     
-    // Fixed amount as per user request: 0.9 USDT
-    const tradeMargin = 0.9;
+    // Use the amount from settings, fallback to 10 if invalid
+    const tradeMargin = amount > 0 ? amount : 10;
 
     const sign = (queryString: string) => crypto.createHmac('sha256', apiSecret).update(queryString).digest('hex');
 
@@ -157,6 +157,14 @@ async function startServer() {
         type: "MARKET",
         quantity: qty
       });
+
+      console.log(`AutoTrade: Order Response for ${symbol}:`, JSON.stringify(order));
+
+      if (order.orderId) {
+        console.log(`AutoTrade: SUCCESS - Order ${order.orderId} filled for ${symbol}`);
+      } else {
+        console.error(`AutoTrade: FAILED - ${order.msg || 'Unknown Error'}`);
+      }
 
       if (order.orderId) {
         console.log(`AutoTrade: [ENTRY] ${symbol} ${side} @ ${currentPrice}`);
@@ -331,7 +339,7 @@ async function startServer() {
 
         const usersInTf = activeUsers.filter(u => (u.data().timeframe || '5m') === tf);
         
-        const batchSize = 10;
+        const batchSize = 15;
         for (let i = 0; i < allSymbols.length; i += batchSize) {
           const batch = allSymbols.slice(i, i + batchSize);
           await Promise.all(batch.map(async (symbol) => {
@@ -339,12 +347,13 @@ async function startServer() {
               let data: any = null;
               for (const base of BINANCE_ENDPOINTS) {
                 try {
-                  data = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${tf}&limit=500`);
+                  data = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${tf}&limit=300`);
                   if (data && Array.isArray(data)) break;
                 } catch (e) {}
               }
 
-              if (!data) return;
+              if (!data || !Array.isArray(data) || data.length < 50) return;
+
               const candles = data.map((d: any) => ({
                 time: d[0],
                 open: parseFloat(d[1]),
@@ -369,8 +378,8 @@ async function startServer() {
                 const last = results[results.length - 2];
                 if (!last) continue;
 
-                // FILTER: Market Price < 0.9 USDT
-                if (last.close >= 0.9) continue;
+                // USER REQUEST: Only trade coins with unit price <= 7 USDT
+                if (last.close > 7) continue;
 
                 const isBuy = last.buySignal;
                 const isSell = last.sellSignal;
