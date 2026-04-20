@@ -41,6 +41,19 @@
         "uid": { "type": "string" }
       },
       "required": ["id", "uid"]
+    },
+    "activityLog": {
+      "title": "Activity Log",
+      "description": "Stores logs of bot activities and trade attempts",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "symbol": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["INFO", "SUCCESS", "ERROR", "WARNING"] },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["userId", "message", "type", "timestamp"]
     }
   },
   "firestore": {
@@ -51,6 +64,10 @@
     "/alerts/{alertId}": {
       "schema": "alerts",
       "description": "Global or user-specific triggered alerts"
+    },
+    "/activity/{logId}": {
+      "schema": "activityLog",
+      "description": "Real-time activity logs for trade status"
     }
   }
 }

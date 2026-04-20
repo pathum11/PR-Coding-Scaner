@@ -70,9 +70,35 @@ async function startServer() {
     'https://fapi2.binance.com',
     'https://fapi3.binance.com'
   ];
-  
-  const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string) => {
+
+  // Simple In-Memory Cache to prevent constant fetching from Binance
+  let cachedExchangeInfo: any = null;
+  let lastExchangeInfoFetch = 0;
+  const EXCHANGE_INFO_CACHE_TTL = 30 * 60 * 1000; // 30 mins
+
+  let cachedBtcKlines = new Map<string, { data: any, timestamp: number }>();
+  const BTC_KLINES_CACHE_TTL = 60 * 1000; // 1 min
+
+  const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string, userId: string) => {
     const baseUrl = "https://fapi.binance.com";
+    
+    // Function to log trade activity for the user to see in UI
+    const logTradeActivity = async (msg: string, type: 'INFO' | 'SUCCESS' | 'ERROR' | 'WARNING') => {
+      try {
+        const logId = `log-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        await setDoc(doc(db, "activity", logId), {
+          userId,
+          symbol,
+          message: msg,
+          type,
+          timestamp: Date.now()
+        });
+      } catch (e) {
+        console.error("Failed to log activity to Firestore:", e);
+      }
+    };
+
+    await logTradeActivity(`Initiating ${side} order for ${symbol}...`, 'INFO');
     
     // Use the amount from settings, fallback to 10 if invalid
     const tradeMargin = amount > 0 ? amount : 10;
@@ -162,8 +188,10 @@ async function startServer() {
 
       if (order.orderId) {
         console.log(`AutoTrade: SUCCESS - Order ${order.orderId} filled for ${symbol}`);
+        await logTradeActivity(`SUCCESS: Order ${order.orderId} filled at ${currentPrice}`, 'SUCCESS');
       } else {
         console.error(`AutoTrade: FAILED - ${order.msg || 'Unknown Error'}`);
+        await logTradeActivity(`FAILED: ${order.msg || 'Unknown Error'}`, 'ERROR');
       }
 
       if (order.orderId) {
@@ -289,13 +317,15 @@ async function startServer() {
 
       const activeUsers = usersSnap.docs.filter((doc: any) => {
         const data = doc.data();
-        // Allow auto-trade even if telegram is disabled, as long as SCAN is on
         return data.autoScan === true;
       });
       const activeUsersCount = activeUsers.length;
-      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started for ${allSymbols.length} symbols. Active Users: ${activeUsersCount}`);
+      console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started. Active Users: ${activeUsersCount}`);
       
-      if (activeUsersCount === 0) return;
+      if (activeUsersCount === 0) {
+        console.log("Scanner: No active users with autoScan enabled. Stopping.");
+        return;
+      }
 
       const timeframes = [...new Set(activeUsers.map(u => u.data().timeframe || '5m'))];
       let totalSignalsFound = 0;
@@ -379,7 +409,12 @@ async function startServer() {
                 if (!last) continue;
 
                 // USER REQUEST: Only trade coins with unit price <= 7 USDT
-                if (last.close > 7) continue;
+                if (last.close > 7) {
+                  if (last.buySignal || last.sellSignal) {
+                    console.log(`Scanner: Signal skipped for ${symbol} - Price (${last.close}) higher than 7 USDT limit.`);
+                  }
+                  continue;
+                }
 
                 const isBuy = last.buySignal;
                 const isSell = last.sellSignal;
@@ -391,6 +426,10 @@ async function startServer() {
                 let signalType = "";
                 if (isBuy && isBtcBullish) signalType = "BUY";
                 if (isSell && isBtcBearish) signalType = "SELL";
+
+                if ((isBuy || isSell) && !signalType) {
+                  console.log(`Scanner: Signal for ${symbol} skipped - Does not align with BTC Trend (${btcTrend})`);
+                }
 
                 if (signalType) {
                   const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalType}`;
@@ -461,7 +500,8 @@ async function startServer() {
                         last.slPrice, 
                         last.recommendedLeverage || 7, 
                         settings.binanceKey, 
-                        settings.binanceSecret
+                        settings.binanceSecret,
+                        userDoc.id
                       );
                     }
                   }
@@ -569,32 +609,51 @@ async function startServer() {
       return res.status(400).json({ error: "Symbol and interval are required" });
     }
 
+    // Cache optimization for BTC trend (frequently requested by frontend)
+    if (symbol === 'BTCUSDT') {
+      const cacheKey = `${symbol}-${interval}`;
+      const cached = cachedBtcKlines.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < BTC_KLINES_CACHE_TTL)) {
+        return res.json(cached.data);
+      }
+    }
+
     let lastError: any = null;
     
     for (const base of BINANCE_ENDPOINTS) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const timeout = setTimeout(() => controller.abort(), 20000); // 20s timeout
 
       try {
         const url = `${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol as string)}&interval=${interval}&limit=${limit || 500}`;
         const response = await fetch(url, { 
           signal: controller.signal,
-          headers: { 'User-Agent': 'Mozilla/5.0' }
+          headers: { 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+          }
         });
         
         clearTimeout(timeout);
 
         if (!response.ok) {
           const text = await response.text();
-          // If rate limited, don't try other endpoints, just return the 429
           if (response.status === 429) {
+            console.error(`Scanner: Rate limited by ${base}`);
             return res.status(429).json({ error: "Binance Rate Limit", details: text });
           }
-          lastError = `Binance API error (${response.status}): ${text}`;
-          continue; // Try next endpoint
+          lastError = `Binance API error (${response.status}) from ${base}: ${text.substring(0, 100)}`;
+          continue; 
         }
 
         const data = await response.json();
+        
+        // Cache BTC klines
+        if (symbol === 'BTCUSDT') {
+          const cacheKey = `${symbol}-${interval}`;
+          cachedBtcKlines.set(cacheKey, { data, timestamp: Date.now() });
+        }
+
         return res.json(data);
       } catch (error: any) {
         clearTimeout(timeout);
@@ -608,6 +667,11 @@ async function startServer() {
 
   // Binance Exchange Info Proxy
   app.get("/api/exchangeInfo", async (req, res) => {
+    // Check cache
+    if (cachedExchangeInfo && (Date.now() - lastExchangeInfoFetch < EXCHANGE_INFO_CACHE_TTL)) {
+      return res.json(cachedExchangeInfo);
+    }
+
     let lastError = "Failed to fetch exchange info from all Binance endpoints";
     let lastStatus = 500;
 
@@ -628,6 +692,9 @@ async function startServer() {
 
         if (response.ok) {
           const data = await response.json();
+          // Update cache
+          cachedExchangeInfo = data;
+          lastExchangeInfoFetch = Date.now();
           return res.json(data);
         }
 

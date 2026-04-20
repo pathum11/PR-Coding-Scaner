@@ -137,6 +137,7 @@ export default function App() {
   const [showBinanceKey, setShowBinanceKey] = useState(false);
   const [showBinanceSecret, setShowBinanceSecret] = useState(false);
   const [checkingBinance, setCheckingBinance] = useState(false);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
 
   // Sync with Firebase
   useEffect(() => {
@@ -174,6 +175,32 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Listen for Trade Activity Logs
+  useEffect(() => {
+    if (!user) {
+      setActivityLogs([]);
+      return;
+    }
+    
+    const logsRef = collection(db, 'activity');
+    const q = query(
+      logsRef, 
+      where('userId', '==', user.uid),
+      orderBy('timestamp', 'desc'),
+      limit(15)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const logs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setActivityLogs(logs);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const saveSettingsToFirebase = async () => {
     if (!user) return;
@@ -1386,13 +1413,61 @@ export default function App() {
             </div>
 
             <div className="col-span-1 space-y-6">
-              <Card className="bg-black/40 border border-white/5 backdrop-blur-sm overflow-hidden">
-                <CardHeader className="py-3 px-4 bg-orange-500/[0.02] border-b border-orange-500/10">
+              <Card className="bg-black/40 border border-white/5 backdrop-blur-sm overflow-hidden flex flex-col h-[500px]">
+                <CardHeader className="py-3 px-4 bg-orange-500/[0.02] border-b border-orange-500/10 flex flex-row items-center justify-between shrink-0">
                   <CardTitle className="text-xs font-bold text-orange-500 uppercase flex items-center gap-2">
-                     <Send className="w-3 h-3" /> Notifications
+                     <Activity className="w-3 h-3" /> Latest Activity
                   </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/5 text-[10px] h-5">Live</Badge>
+                  </div>
                 </CardHeader>
-                <CardContent className="p-4 space-y-4">
+                <CardContent className="p-0 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-orange-500/20">
+                   <div className="divide-y divide-white/5">
+                      {activityLogs.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <History className="w-8 h-8 text-zinc-800 mx-auto mb-2" />
+                          <p className="text-xs text-zinc-600">No activity recorded yet.<br/>Waiting for next scan...</p>
+                        </div>
+                      ) : (
+                        activityLogs.map((log) => (
+                          <div key={log.id} className="p-3 hover:bg-white/[0.02] transition-colors">
+                            <div className="flex justify-between items-start mb-1">
+                              <span className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                                log.type === 'SUCCESS' ? "bg-emerald-500/10 text-emerald-500" :
+                                log.type === 'ERROR' ? "bg-red-500/10 text-red-500" :
+                                log.type === 'WARNING' ? "bg-amber-500/10 text-amber-500" :
+                                "bg-blue-500/10 text-blue-400"
+                              )}>
+                                {log.symbol || 'SYSTEM'}
+                              </span>
+                              <span className="text-[10px] text-zinc-600 font-mono">
+                                {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-zinc-400 leading-tight">{log.message}</p>
+                          </div>
+                        ))
+                      )}
+                   </div>
+                </CardContent>
+                <div className="p-3 bg-zinc-900/50 border-t border-white/5 shrink-0">
+                   <div className="flex items-center justify-between opacity-60">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                        <span className="text-[10px] text-zinc-400">Scanner Online</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-500">Auto-Trade: {autoTradeEnabled ? 'ON' : 'OFF'}</span>
+                   </div>
+                </div>
+              </Card>
+
+              <Card className="bg-black/40 border border-white/5 backdrop-blur-sm overflow-hidden">
+                <CardHeader className="py-2 px-4 bg-zinc-900/50 border-b border-white/5">
+                   <CardTitle className="text-[10px] font-bold text-zinc-500 uppercase">Bot Status</CardTitle>
+                </CardHeader>
+                <CardContent className="p-3 space-y-3">
                    <div className="flex items-center justify-between">
                       <span className="text-xs text-zinc-400">Telegram Status</span>
                       <Badge variant="outline" className="border-emerald-500/30 text-emerald-500 bg-emerald-500/5 text-[10px]">Active</Badge>

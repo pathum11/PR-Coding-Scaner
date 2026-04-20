@@ -48,9 +48,23 @@ service cloud.firestore {
              data.timestamp is number;
     }
 
+    function isValidActivityLog(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.message is string && data.message.size() < 500 &&
+             data.type in ["INFO", "SUCCESS", "ERROR", "WARNING"] &&
+             data.timestamp is number;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /activity/{logId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      // Server SDK usually writes these, but adding secure rules in case client ever needs to log
+      allow create: if isAuthenticated() && isValidActivityLog(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
 
     match /settings/{uid} {
       // Diagnostic: Allow read for now to see if scanner works
