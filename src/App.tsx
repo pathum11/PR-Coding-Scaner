@@ -88,8 +88,8 @@ export default function App() {
   const [stMult, setStMult] = useState(3.0);
   const [rsiLen, setRsiLen] = useState(14);
   const [rsiSm, setRsiSm] = useState(14);
-  const [tpRatio, setTpRatio] = useState(2.0);
-  const [slLookback, setSlLookback] = useState(3);
+  const [slPct, setSlPct] = useState(0.9);
+  const [tpPct, setTpPct] = useState(1.8);
 
   // Scanner State
   const [scanResults, setScanResults] = useState<any[]>([]);
@@ -140,8 +140,8 @@ export default function App() {
             if (data.stMult !== undefined) setStMult(data.stMult);
             if (data.rsiLen !== undefined) setRsiLen(data.rsiLen);
             if (data.rsiSm !== undefined) setRsiSm(data.rsiSm);
-            if (data.tpRatio !== undefined) setTpRatio(data.tpRatio);
-            if (data.slLookback !== undefined) setSlLookback(data.slLookback);
+            if (data.slPct !== undefined) setSlPct(data.slPct);
+            if (data.tpPct !== undefined) setTpPct(data.tpPct);
             if (data.scanLookbackMinutes !== undefined) setScanLookbackMinutes(data.scanLookbackMinutes);
             else if (data.scanLookbackHours !== undefined) setScanLookbackMinutes(data.scanLookbackHours * 60);
           }
@@ -166,8 +166,8 @@ export default function App() {
         stMult,
         rsiLen,
         rsiSm,
-        tpRatio,
-        slLookback,
+        slPct,
+        tpPct,
         scanLookbackMinutes,
         updatedAt: Date.now()
       }, { merge: true });
@@ -185,7 +185,7 @@ export default function App() {
     }
   }, [
     telegramEnabled, telegramToken, telegramChatId, autoScan, soundEnabled, timeframe,
-    stSense, stMult, rsiLen, rsiSm, tpRatio, slLookback, scanLookbackMinutes, user
+    stSense, stMult, rsiLen, rsiSm, slPct, tpPct, scanLookbackMinutes, user
   ]);
 
   const login = async () => {
@@ -483,8 +483,8 @@ export default function App() {
               stMult, 
               rsiLen,
               rsiSm,
-              tpRatio,
-              slLookback
+              slPct,
+              tpPct
             });
 
             const now = Date.now();
@@ -601,10 +601,10 @@ export default function App() {
       stMult, 
       rsiLen,
       rsiSm,
-      tpRatio,
-      slLookback
+      slPct,
+      tpPct
     });
-  }, [candles, stSense, stMult, rsiLen, rsiSm, tpRatio, slLookback]);
+  }, [candles, stSense, stMult, rsiLen, rsiSm, slPct, tpPct]);
 
   const latest = processedData[processedData.length - 1];
 
@@ -895,21 +895,22 @@ export default function App() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">TP Ratio (R:R)</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Stop Loss %</label>
                       <Input 
                         type="number" 
                         step="0.1"
-                        value={tpRatio} 
-                        onChange={(e) => setTpRatio(parseFloat(e.target.value))}
+                        value={slPct} 
+                        onChange={(e) => setSlPct(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">SL Lookback</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Take Profit %</label>
                       <Input 
                         type="number" 
-                        value={slLookback} 
-                        onChange={(e) => setSlLookback(parseInt(e.target.value))}
+                        step="0.1"
+                        value={tpPct} 
+                        onChange={(e) => setTpPct(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>

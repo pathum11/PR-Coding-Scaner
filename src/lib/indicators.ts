@@ -169,8 +169,8 @@ export function processIndicators(candles: Candle[], settings: {
   stMult: number,
   rsiLen: number,
   rsiSm: number,
-  tpRatio: number,
-  slLookback: number
+  slPct: number,
+  tpPct: number
 }) {
   if (!candles || candles.length === 0) return [];
 
@@ -184,7 +184,6 @@ export function processIndicators(candles: Candle[], settings: {
   // rsiHist = f_jma(rsiVal - 50, rsiSm, 50, 2)
   const rsiMinus50 = rsi.map(r => r === null ? 0 : r - 50);
   const rsiHist = calculateJMA(rsiMinus50, settings.rsiSm, 50, 2);
-  const atr = calculateATR(high, low, close, 14);
 
   let currentSlPrice: number | null = null;
   let currentTpPrice: number | null = null;
@@ -199,9 +198,6 @@ export function processIndicators(candles: Candle[], settings: {
     // Trend change detection
     if (currentDir !== prevDir) {
       hasSignalInTrend = false;
-      // If we had a position, we exit strictly on SuperTrend flip if that's desired, 
-      // but the pine code doesn't explicitly exit on flip, it just calculates SL/TP.
-      // However, usually logic like this exits on flip.
     }
 
     const rsiVal = rsi[i];
@@ -212,8 +208,6 @@ export function processIndicators(candles: Candle[], settings: {
     const isRsiBullish = rsiH > 0;
     const isRsiBearish = rsiH < 0;
 
-    // buySync = isStBullish and isRsiBullish
-    // sellSync = isStBearish and isRsiBearish
     const buySync = isStBullish && isRsiBullish;
     const sellSync = isStBearish && isRsiBearish;
 
@@ -224,31 +218,20 @@ export function processIndicators(candles: Candle[], settings: {
       hasSignalInTrend = true;
     }
 
-    // SL/TP Calculation
+    // SL/TP Calculation (Modified for Fixed Percentage)
+    const slFactor = settings.slPct / 100;
+    const tpFactor = settings.tpPct / 100;
+
     if (buySignal) {
-      // slPrice := ta.lowest(low, slLookback) - (atr * 0.2)
-      let lowestLow = candle.low;
-      for (let j = Math.max(0, i - settings.slLookback + 1); j <= i; j++) {
-        if (low[j] < lowestLow) lowestLow = low[j];
-      }
-      const currentATR = atr[i] || 0;
-      const sl = lowestLow - (currentATR * 0.2);
-      const risk = candle.close - sl;
-      const tp = candle.close + (risk * settings.tpRatio);
+      const sl = candle.close * (1.0 - slFactor);
+      const tp = candle.close * (1.0 + tpFactor);
       
       currentSlPrice = Number(sl.toFixed(5));
       currentTpPrice = Number(tp.toFixed(5));
       position = 'LONG';
     } else if (sellSignal) {
-      // slPrice := ta.highest(high, slLookback) + (atr * 0.2)
-      let highestHigh = candle.high;
-      for (let j = Math.max(0, i - settings.slLookback + 1); j <= i; j++) {
-        if (high[j] > highestHigh) highestHigh = high[j];
-      }
-      const currentATR = atr[i] || 0;
-      const sl = highestHigh + (currentATR * 0.2);
-      const risk = sl - candle.close;
-      const tp = candle.close - (risk * settings.tpRatio);
+      const sl = candle.close * (1.0 + slFactor);
+      const tp = candle.close * (1.0 - tpFactor);
       
       currentSlPrice = Number(sl.toFixed(5));
       currentTpPrice = Number(tp.toFixed(5));

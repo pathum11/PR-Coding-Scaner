@@ -193,8 +193,8 @@ async function startServer() {
               stMult: 3.0,
               rsiLen: 14,
               rsiSm: 14,
-              tpRatio: 2.0,
-              slLookback: 3
+              slPct: 0.9,
+              tpPct: 1.8
             });
             const lastBtc = btcResults[btcResults.length - 2]; 
             if (lastBtc) {
@@ -237,8 +237,8 @@ async function startServer() {
                   stMult: settings.stMult || 3.0,
                   rsiLen: settings.rsiLen || 14,
                   rsiSm: settings.rsiSm || 14,
-                  tpRatio: settings.tpRatio || 2.0,
-                  slLookback: settings.slLookback || 3
+                  slPct: settings.slPct || 0.9,
+                  tpPct: settings.tpPct || 1.8
                 });
 
                 // Check the last closed candle
