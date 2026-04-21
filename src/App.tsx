@@ -1418,7 +1418,10 @@ export default function App() {
                   <div className="flex items-center justify-between p-4 bg-orange-500/5 rounded-xl border border-orange-500/10">
                     <div className="flex items-center gap-2">
                       <Zap className={cn("w-4 h-4", autoTradeEnabled ? "text-orange-500" : "text-zinc-500")} />
-                      <span className="text-sm border-zinc-100 font-bold">Autonomous Execution</span>
+                      <div className="flex flex-col">
+                        <span className="text-sm border-zinc-100 font-bold">Auto Trade Mode</span>
+                        <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider">Execute signals automatically</span>
+                      </div>
                     </div>
                     <button 
                       onClick={() => setAutoTradeEnabled(!autoTradeEnabled)}

@@ -269,18 +269,36 @@ async function startServer() {
         
         // 3. Take Profit
         const tpSide = side === "BUY" ? "SELL" : "BUY";
-        const tpOrder = await apiCall("/fapi/v1/order", "POST", {
+        const allowedTypes = symInfo.orderTypes || [];
+        const hasTpMarket = allowedTypes.includes("TAKE_PROFIT_MARKET");
+        const hasTpLimit = allowedTypes.includes("TAKE_PROFIT");
+
+        let tpParams: any = {
           symbol,
           side: tpSide,
-          positionSide, // Matches the entry order
-          type: "TAKE_PROFIT_MARKET",
-          stopPrice: formatPrice(finalTp),
+          positionSide,
           closePosition: "true",
           workingType: "MARK_PRICE"
-        });
+        };
+
+        if (hasTpMarket) {
+          tpParams.type = "TAKE_PROFIT_MARKET";
+          tpParams.stopPrice = formatPrice(finalTp);
+        } else if (hasTpLimit) {
+          tpParams.type = "TAKE_PROFIT";
+          tpParams.stopPrice = formatPrice(finalTp);
+          tpParams.price = formatPrice(finalTp); // Limit versions need price
+          tpParams.timeInForce = "GTC";
+        } else {
+          // Absolute fallback: try MARKET if nothing else matches (though risky)
+          tpParams.type = "TAKE_PROFIT_MARKET";
+          tpParams.stopPrice = formatPrice(finalTp);
+        }
+
+        const tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
 
         if (tpOrder.orderId) {
-          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)}`);
+          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)} (Mode: ${tpParams.type})`);
           await logTradeActivity(`TP Set: ${symbol} @ ${formatPrice(finalTp)}`, 'INFO');
         } else {
           console.error(`AutoTrade: [TP FAILED] ${symbol}:`, tpOrder.msg || JSON.stringify(tpOrder));
@@ -288,18 +306,34 @@ async function startServer() {
         }
 
         // 4. Stop Loss
-        const slOrder = await apiCall("/fapi/v1/order", "POST", {
+        const hasSlMarket = allowedTypes.includes("STOP_MARKET");
+        const hasSlLimit = allowedTypes.includes("STOP");
+
+        let slParams: any = {
           symbol,
           side: tpSide,
-          positionSide, // Matches the entry order
-          type: "STOP_MARKET",
-          stopPrice: formatPrice(finalSl),
+          positionSide,
           closePosition: "true",
           workingType: "MARK_PRICE"
-        });
+        };
+
+        if (hasSlMarket) {
+          slParams.type = "STOP_MARKET";
+          slParams.stopPrice = formatPrice(finalSl);
+        } else if (hasSlLimit) {
+          slParams.type = "STOP";
+          slParams.stopPrice = formatPrice(finalSl);
+          slParams.price = formatPrice(finalSl);
+          slParams.timeInForce = "GTC";
+        } else {
+          slParams.type = "STOP_MARKET";
+          slParams.stopPrice = formatPrice(finalSl);
+        }
+
+        const slOrder = await apiCall("/fapi/v1/order", "POST", slParams);
         
         if (slOrder.orderId) {
-          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)}`);
+          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (Mode: ${slParams.type})`);
           await logTradeActivity(`SL Set: ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
         } else {
           console.error(`AutoTrade: [SL FAILED] ${symbol}:`, slOrder.msg || JSON.stringify(slOrder));
@@ -531,9 +565,11 @@ async function startServer() {
                   tpPct: settings.tpPct || 3.6
                 });
 
-                // Check recent closed candles (Lookback 30 minutes to match UI logic reliability)
+                // Check recent closed candles (Reactive mode)
                 const now = Date.now();
-                const lookbackMs = 30 * 60 * 1000;
+                const timeframeToMs: Record<string, number> = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000 };
+                const tfMs = timeframeToMs[tf as string] || 300000;
+                const lookbackMs = tfMs * 2; // Check last 2 candle windows
                 const lookbackLimit = now - lookbackMs;
 
                 let foundValidSignal = null;
@@ -542,9 +578,6 @@ async function startServer() {
                 for (let i = results.length - 2; i >= 0; i--) {
                   const candle = results[i];
                   if (candle.time < lookbackLimit) break;
-
-                  // 1. Price Filter (Silent for way-out coins)
-                  if (candle.close > 7) continue;
 
                   const isBuy = candle.buySignal;
                   const isSell = candle.sellSignal;
