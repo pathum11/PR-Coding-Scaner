@@ -394,7 +394,8 @@ async function startServer() {
               slPct: 2.8,
               tpPct: 3.6
             });
-            const lastBtc = btcResults[btcResults.length - 2]; 
+            // Use the last candle (can be live) for BTC Market context to be reactive like UI
+            const lastBtc = btcResults[btcResults.length - 1]; 
             if (lastBtc) {
               btcTrend = lastBtc.trend === "BULLISH" ? "BULLISH 🟢" : "BEARISH 🔴";
             }
@@ -413,7 +414,7 @@ async function startServer() {
               let data: any = null;
               for (const base of BINANCE_ENDPOINTS) {
                 try {
-                  data = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${tf}&limit=300`);
+                  data = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${tf}&limit=500`);
                   if (data && Array.isArray(data)) break;
                 } catch (e) {}
               }
