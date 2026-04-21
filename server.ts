@@ -119,15 +119,15 @@ async function startServer() {
       let finalTp = tp;
       let finalSl = sl;
       let finalLeverage = leverage;
-      let tpPctFallback = 3.0;
-      let slPctFallback = 2.5;
+      let tpPctFallback = 36.0;
+      let slPctFallback = 28.0;
 
       if (tp === 0 || sl === 0) {
         const settingsSnap = await getDoc(doc(db, "settings", userId));
         if (settingsSnap.exists()) {
           const s = settingsSnap.data();
-          tpPctFallback = s.tpPct || 3.0;
-          slPctFallback = s.slPct || 2.5;
+          tpPctFallback = s.tpPct || 36.0;
+          slPctFallback = s.slPct || 28.0;
           if (leverage === 1) finalLeverage = s.stMult || 7; // Use multiplier as default leverage if not provided
         }
       }
@@ -215,14 +215,17 @@ async function startServer() {
       const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
       const currentPrice = parseFloat(priceRes.price);
 
-      // Recalculate TP/SL if they were missing (Common in manual trades or specific alert bypasses)
-      if (finalTp === 0) {
-        finalTp = side === "BUY" 
+      // Recalculate TP/SL if they were missing or invalid (Common in manual trades or specific alert bypasses)
+      // If TP/SL are provided but would immediately trigger (price moved past them), recalculate using fallback %
+      const isBuy = side === "BUY";
+      
+      if (finalTp === 0 || (isBuy && finalTp <= currentPrice) || (!isBuy && finalTp >= currentPrice)) {
+        finalTp = isBuy 
           ? currentPrice * (1 + tpPctFallback / 100) 
           : currentPrice * (1 - tpPctFallback / 100);
       }
-      if (finalSl === 0) {
-        finalSl = side === "BUY" 
+      if (finalSl === 0 || (isBuy && finalSl >= currentPrice) || (!isBuy && finalSl <= currentPrice)) {
+        finalSl = isBuy 
           ? currentPrice * (1 - slPctFallback / 100) 
           : currentPrice * (1 + slPctFallback / 100);
       }
@@ -262,7 +265,7 @@ async function startServer() {
       }
 
       if (order.orderId) {
-        console.log(`AutoTrade: [ENTRY] ${symbol} ${side} @ ${currentPrice}`);
+        console.log(`AutoTrade: [ENTRY SUCCESS] ${symbol} ${side} @ ${currentPrice} - OrderId: ${order.orderId}`);
         
         // 3. Take Profit
         const tpSide = side === "BUY" ? "SELL" : "BUY";
@@ -273,10 +276,16 @@ async function startServer() {
           type: "TAKE_PROFIT_MARKET",
           stopPrice: formatPrice(finalTp),
           closePosition: "true",
-          timeInForce: "GTC"
+          workingType: "MARK_PRICE"
         });
 
-        if (tpOrder.orderId) console.log(`AutoTrade: [TP SET] ${symbol} @ ${formatPrice(finalTp)}`);
+        if (tpOrder.orderId) {
+          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)}`);
+          await logTradeActivity(`TP Set: ${symbol} @ ${formatPrice(finalTp)}`, 'INFO');
+        } else {
+          console.error(`AutoTrade: [TP FAILED] ${symbol}:`, tpOrder.msg || JSON.stringify(tpOrder));
+          await logTradeActivity(`Failed to set TP for ${symbol}: ${tpOrder.msg || 'Unknown Error'}`, 'ERROR');
+        }
 
         // 4. Stop Loss
         const slOrder = await apiCall("/fapi/v1/order", "POST", {
@@ -286,13 +295,17 @@ async function startServer() {
           type: "STOP_MARKET",
           stopPrice: formatPrice(finalSl),
           closePosition: "true",
-          timeInForce: "GTC"
+          workingType: "MARK_PRICE"
         });
         
-        if (slOrder.orderId) console.log(`AutoTrade: [SL SET] ${symbol} @ ${formatPrice(finalSl)}`);
+        if (slOrder.orderId) {
+          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)}`);
+          await logTradeActivity(`SL Set: ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
+        } else {
+          console.error(`AutoTrade: [SL FAILED] ${symbol}:`, slOrder.msg || JSON.stringify(slOrder));
+          await logTradeActivity(`Failed to set SL for ${symbol}: ${slOrder.msg || 'Unknown Error'}`, 'ERROR');
+        }
 
-      } else {
-        console.error(`AutoTrade: Entry Order Failed for ${symbol}:`, order.msg || JSON.stringify(order));
       }
     } catch (e: any) {
       console.error(`AutoTrade: Execution Error for ${symbol}:`, e.message);

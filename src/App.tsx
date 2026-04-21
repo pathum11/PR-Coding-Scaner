@@ -90,8 +90,8 @@ export default function App() {
   const [stMult, setStMult] = useState(3.0);
   const [rsiLen, setRsiLen] = useState(14);
   const [rsiSm, setRsiSm] = useState(14);
-  const [slPct, setSlPct] = useState(2.8);
-  const [tpPct, setTpPct] = useState(3.6);
+  const [slPct, setSlPct] = useState(28.0);
+  const [tpPct, setTpPct] = useState(36.0);
   
   // BTC Trend State
   const [btcTrend, setBtcTrend] = useState<{ trend: string, signal?: string } | null>(null);
