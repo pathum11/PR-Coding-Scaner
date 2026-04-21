@@ -808,15 +808,15 @@ async function startServer() {
   });
 
   app.post("/api/manual-trade", async (req, res) => {
-    const { symbol, side, binanceKey, binanceSecret, userId, tradeAmount } = req.body;
+    const { symbol, side, binanceKey, binanceSecret, userId, tradeAmount, tp, sl } = req.body;
     try {
-      console.log(`AutoTrade: Initiating manual trade for User ${userId} on ${symbol}`);
+      console.log(`AutoTrade: Initiating manual trade for User ${userId} on ${symbol} (TP: ${tp}, SL: ${sl})`);
       await executeBinanceTrade(
         symbol,
         side as "BUY" | "SELL",
         parseFloat(tradeAmount || '10'), // Margin
-        0, // TP (0 means calculate from settings)
-        0, // SL (0 means calculate from settings)
+        parseFloat(tp || '0'), // TP
+        parseFloat(sl || '0'), // SL
         1, // Initial leverage (will be auto-boosted to hit notional floor if needed)
         binanceKey,
         binanceSecret,

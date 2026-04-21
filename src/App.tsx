@@ -139,6 +139,7 @@ export default function App() {
   const [checkingBinance, setCheckingBinance] = useState(false);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [serverIp, setServerIp] = useState<string>('Loading...');
+  const [tradedIds, setTradedIds] = useState<Set<string>>(new Set());
 
   // Fetch Server IP
   useEffect(() => {
@@ -316,7 +317,7 @@ export default function App() {
     }
   };
 
-  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL') => {
+  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL', signalId?: string, tp?: number, sl?: number) => {
     if (!user || !binanceKey || !binanceSecret) {
       alert("Please ensure you are logged in and have Binance API keys configured.");
       return;
@@ -331,11 +332,23 @@ export default function App() {
           binanceKey,
           binanceSecret,
           userId: user.uid,
-          tradeAmount: tradeAmount
+          tradeAmount: tradeAmount,
+          tp: tp || 0,
+          sl: sl || 0
         })
       });
-      if (response.ok) alert(`Manual trade success for ${symbol}`);
-      else {
+      if (response.ok) {
+        if (signalId) {
+          setTradedIds(prev => new Set(prev).add(signalId));
+        }
+        // Success notification instead of intrusive alert
+        setNotifications(prev => [{
+          id: Date.now(),
+          symbol,
+          type: 'SUCCESS',
+          message: `Manual trade executed successfully!`
+        }, ...prev].slice(0, 5));
+      } else {
         const errorData = await response.json();
         alert(`Manual trade failed: ${errorData.error}`);
       }
@@ -1092,18 +1105,26 @@ export default function App() {
                              })} <span className="text-[10px] opacity-70">IST</span>
                            </td>
                            <td className="p-4 text-right">
-                             <Button 
-                               size="sm"
-                               onClick={() => triggerManualTrade(res.symbol, res.type)}
-                               className={cn(
-                                 "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
-                                 res.type === 'BUY' 
-                                   ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
-                                   : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
-                               )}
-                             >
-                               Trade {res.type}
-                             </Button>
+                             {tradedIds.has(res.id) ? (
+                               <div className="flex justify-end pr-4">
+                                 <div className="w-7 h-7 bg-emerald-500/20 rounded-full flex items-center justify-center border border-emerald-500/50">
+                                   <Check className="w-4 h-4 text-emerald-500" />
+                                 </div>
+                               </div>
+                             ) : (
+                               <Button 
+                                 size="sm"
+                                 onClick={() => triggerManualTrade(res.symbol, res.type, res.id, res.tpPrice, res.slPrice)}
+                                 className={cn(
+                                   "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
+                                   res.type === 'BUY' 
+                                     ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
+                                     : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
+                                 )}
+                               >
+                                 Trade {res.type}
+                               </Button>
+                             )}
                            </td>
                         </motion.tr>
                       ))}
