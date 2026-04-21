@@ -182,7 +182,16 @@ async function startServer() {
         console.log(`AutoTrade: Boosting leverage for ${symbol} to ${effectiveLeverage} to hit 5 USDT min notional (Margin: ${tradeMargin})`);
       }
 
-      // 1. Set Leverage
+      // 1. Get Position Mode (Hedge vs One-way)
+      const modeRes = await apiCall("/fapi/v1/positionSide/dual", "GET", {});
+      const isHedgeMode = modeRes.dualSidePosition; // true = Hedge Mode, false = One-way Mode
+      
+      // Define positionSide based on mode and signal
+      // One-way: BOTH
+      // Hedge: LONG or SHORT
+      const positionSide = isHedgeMode ? (side === "BUY" ? "LONG" : "SHORT") : "BOTH";
+
+      // 1.5 Set Leverage
       await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: effectiveLeverage.toString() });
 
       // 2. Market Order
@@ -199,6 +208,7 @@ async function startServer() {
       const order = await apiCall("/fapi/v1/order", "POST", {
         symbol,
         side,
+        positionSide,
         type: "MARKET",
         quantity: qty
       });
@@ -230,6 +240,7 @@ async function startServer() {
         const tpOrder = await apiCall("/fapi/v1/order", "POST", {
           symbol,
           side: tpSide,
+          positionSide, // Matches the entry order
           type: "TAKE_PROFIT_MARKET",
           stopPrice: formatPrice(tp),
           closePosition: "true",
@@ -242,6 +253,7 @@ async function startServer() {
         const slOrder = await apiCall("/fapi/v1/order", "POST", {
           symbol,
           side: tpSide,
+          positionSide, // Matches the entry order
           type: "STOP_MARKET",
           stopPrice: formatPrice(sl),
           closePosition: "true",
