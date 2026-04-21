@@ -622,7 +622,7 @@ export default function App() {
             for (let j = processed.length - 2; j >= 0; j--) {
               const candle = processed[j];
               if (candle.time < lookbackLimit) break;
-              
+
               // FILTER: Market Price < 0.9 USDT
               if (candle.close >= 0.9) continue;
 
@@ -724,18 +724,19 @@ export default function App() {
 
   useEffect(() => {
     fetchData(symbol, timeframe);
-    fetchBtcTrend(timeframe);
+    fetchBtcTrend('15m');
     const interval = setInterval(() => {
       fetchData(symbol, timeframe);
-      fetchBtcTrend(timeframe);
+      fetchBtcTrend('15m');
     }, 60000); // Refresh every minute
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
 
-  const fetchBtcTrend = async (currentTF: string) => {
+  const fetchBtcTrend = async (forcedTF?: string) => {
     setBtcTrendLoading(true);
+    const contextTF = forcedTF || '15m';
     try {
-      const response = await fetchWithRetry(`/api/klines?symbol=BTCUSDT&interval=${currentTF}&limit=100`);
+      const response = await fetchWithRetry(`/api/klines?symbol=BTCUSDT&interval=${contextTF}&limit=100`);
       if (response.ok) {
         let data;
         try {

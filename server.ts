@@ -363,15 +363,16 @@ async function startServer() {
         try {
           let btcRaw: any = null;
           
-          // Check cache first
-          const cacheKey = `BTCUSDT-${tf}`;
+          // Check cache first (always use 15m for context)
+          const btcTf = '15m';
+          const cacheKey = `BTCUSDT-${btcTf}`;
           const cached = cachedBtcKlines.get(cacheKey);
           if (cached && (Date.now() - cached.timestamp < BTC_KLINES_CACHE_TTL)) {
             btcRaw = cached.data;
           } else {
             for (const base of BINANCE_ENDPOINTS) {
               try {
-                const res = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=100`);
+                const res = await fetchWithRetry(`${base}/fapi/v1/klines?symbol=BTCUSDT&interval=${btcTf}&limit=100`);
                 if (res && Array.isArray(res)) {
                   btcRaw = res;
                   // Update cache for other requests too
@@ -446,8 +447,11 @@ async function startServer() {
                 if (!last) continue;
 
                 // USER REQUEST: Only trade coins with unit price <= 7 USDT
+                // We keep this filter but make it "silent" for coins that are way outside, 
+                // only log if a signal is actually there to inform user why it skipped.
                 if (last.close > 7) {
-                  if (last.buySignal || last.sellSignal) {
+                  const isSignal = last.buySignal || last.sellSignal;
+                  if (isSignal && last.close < 50) { // Only log "Close calls" or signals on reasonable coins
                     console.log(`Scanner: Signal skipped for ${symbol} - Price (${last.close}) higher than 7 USDT limit.`);
                     await logActivity(userDoc.id, symbol, `Signal detected but skipped: Price (${last.close}) is higher than your 7 USDT limit.`, 'WARNING');
                   }
