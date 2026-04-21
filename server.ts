@@ -171,14 +171,30 @@ async function startServer() {
         }
       }
 
+      // 0.2 Notional Safety Check (Binance Min is 5 USDT)
+      const MIN_NOTIONAL = 5.2; 
+      let effectiveLeverage = leverage;
+      
+      if (tradeMargin * effectiveLeverage < MIN_NOTIONAL) {
+        effectiveLeverage = Math.ceil(MIN_NOTIONAL / tradeMargin);
+        // Cap to preventing excessive risk, but ensure we pass the floor
+        if (effectiveLeverage > 50) effectiveLeverage = 50; 
+        console.log(`AutoTrade: Boosting leverage for ${symbol} to ${effectiveLeverage} to hit 5 USDT min notional (Margin: ${tradeMargin})`);
+      }
+
       // 1. Set Leverage
-      await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: leverage.toString() });
+      await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: effectiveLeverage.toString() });
 
       // 2. Market Order
       const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
       const currentPrice = parseFloat(priceRes.price);
       
-      let qty = formatQty((tradeMargin * leverage) / currentPrice); 
+      let qty = formatQty((tradeMargin * effectiveLeverage) / currentPrice); 
+      
+      // Secondary check: If qty * price is still < 5 (due to rounding), add one stepSize
+      if (parseFloat(qty) * currentPrice < 5.0) {
+        qty = formatQty(parseFloat(qty) + stepSize);
+      }
       
       const order = await apiCall("/fapi/v1/order", "POST", {
         symbol,

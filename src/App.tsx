@@ -1464,6 +1464,7 @@ export default function App() {
                       <li>Whitelist IP: <code className="bg-black/60 px-1 py-0.5 rounded text-orange-400 font-mono text-[10px]">{serverIp}</code> in Binance Settings.</li>
                       <li>Ensure API keys have <span className="text-orange-400 font-bold">"Enable Futures"</span> checked.</li>
                       <li>Global Binance accounts only (Binance US is not supported).</li>
+                      <li>Min Trade Value is $5. If margin is $0.90, leverage will be adj. to 6x+ automatically.</li>
                       <li>Strategy uses Market Orders for entry, TP, and SL.</li>
                     </ul>
                   </div>
