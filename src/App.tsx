@@ -310,6 +310,34 @@ export default function App() {
     }
   };
 
+  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL') => {
+    if (!user || !binanceKey || !binanceSecret) {
+      alert("Please ensure you are logged in and have Binance API keys configured.");
+      return;
+    }
+    try {
+      const response = await fetch('/api/manual-trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol,
+          side,
+          binanceKey,
+          binanceSecret,
+          userId: user.uid,
+          tradeAmount: tradeAmount
+        })
+      });
+      if (response.ok) alert(`Manual trade success for ${symbol}`);
+      else {
+        const errorData = await response.json();
+        alert(`Manual trade failed: ${errorData.error}`);
+      }
+    } catch (e) {
+      alert(`Manual trade error: ${e}`);
+    }
+  };
+
   const testTelegram = async () => {
     if (!telegramToken || !telegramChatId) {
       setError('Please enter both Token and Chat ID to test.');
@@ -927,6 +955,12 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3">
+              <Button 
+                onClick={() => triggerManualTrade('UMAUSDT.P', 'BUY')}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white gap-2 shadow-[0_0_15px_rgba(5,150,105,0.3)] h-11 px-4 font-black uppercase text-xs transition-all active:scale-95"
+              >
+                <Zap className="w-4 h-4" /> TEST BUY UMA
+              </Button>
               <Button 
                 onClick={startScan} 
                 disabled={scanning}

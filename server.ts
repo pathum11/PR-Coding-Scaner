@@ -126,7 +126,8 @@ async function startServer() {
       }
 
       if (!symInfo) {
-        console.error(`AutoTrade: Error fetching rules for ${symbol}`);
+        console.error(`AutoTrade: Error fetching rules for ${symbol}. Checked endpoints: ${BINANCE_ENDPOINTS.join(', ')}`);
+        await logTradeActivity(`Error: Could not retrieve trading rules for ${symbol}. Please check if the symbol exists on Binance Futures.`, 'ERROR');
         return;
       }
 
@@ -723,6 +724,29 @@ async function startServer() {
     }
 
     res.status(500).json({ error: lastError || "Failed to fetch klines from all Binance endpoints" });
+  });
+
+  app.post("/api/manual-trade", async (req, res) => {
+    const { symbol, side, binanceKey, binanceSecret, userId, tradeAmount } = req.body;
+    try {
+      console.log(`AutoTrade: Initiating manual trade for User ${userId} on ${symbol}`);
+      await executeBinanceTrade(
+        userId,
+        symbol,
+        side as "BUY" | "SELL",
+        0, // price - market order ignores this
+        0, // tp - not needed for test
+        0, // sl - not needed for test
+        5, // leverage
+        binanceKey,
+        binanceSecret,
+        parseFloat(tradeAmount || '10') // Use tradeAmount from request
+      );
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Manual Trade Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
   });
 
   // Binance Exchange Info Proxy
