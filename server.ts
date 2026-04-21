@@ -115,7 +115,24 @@ async function startServer() {
     };
 
     try {
-      // 0. Get Symbol Rules (IMPORTANT for Filter Failures)
+      // 0. Fetch User Settings for TP/SL fallbacks
+      let finalTp = tp;
+      let finalSl = sl;
+      let finalLeverage = leverage;
+      let tpPctFallback = 3.0;
+      let slPctFallback = 2.5;
+
+      if (tp === 0 || sl === 0) {
+        const settingsSnap = await getDoc(doc(db, "settings", userId));
+        if (settingsSnap.exists()) {
+          const s = settingsSnap.data();
+          tpPctFallback = s.tpPct || 3.0;
+          slPctFallback = s.slPct || 2.5;
+          if (leverage === 1) finalLeverage = s.stMult || 7; // Use multiplier as default leverage if not provided
+        }
+      }
+
+      // 0.1 Get Symbol Rules (IMPORTANT for Filter Failures)
       let symInfo: any = null;
       for (const base of BINANCE_ENDPOINTS) {
         try {
@@ -197,6 +214,18 @@ async function startServer() {
       // 2. Market Order
       const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
       const currentPrice = parseFloat(priceRes.price);
+
+      // Recalculate TP/SL if they were missing (Common in manual trades or specific alert bypasses)
+      if (finalTp === 0) {
+        finalTp = side === "BUY" 
+          ? currentPrice * (1 + tpPctFallback / 100) 
+          : currentPrice * (1 - tpPctFallback / 100);
+      }
+      if (finalSl === 0) {
+        finalSl = side === "BUY" 
+          ? currentPrice * (1 - slPctFallback / 100) 
+          : currentPrice * (1 + slPctFallback / 100);
+      }
       
       let qty = formatQty((tradeMargin * effectiveLeverage) / currentPrice); 
       
@@ -242,12 +271,12 @@ async function startServer() {
           side: tpSide,
           positionSide, // Matches the entry order
           type: "TAKE_PROFIT_MARKET",
-          stopPrice: formatPrice(tp),
+          stopPrice: formatPrice(finalTp),
           closePosition: "true",
           timeInForce: "GTC"
         });
 
-        if (tpOrder.orderId) console.log(`AutoTrade: [TP SET] ${symbol} @ ${formatPrice(tp)}`);
+        if (tpOrder.orderId) console.log(`AutoTrade: [TP SET] ${symbol} @ ${formatPrice(finalTp)}`);
 
         // 4. Stop Loss
         const slOrder = await apiCall("/fapi/v1/order", "POST", {
@@ -255,12 +284,12 @@ async function startServer() {
           side: tpSide,
           positionSide, // Matches the entry order
           type: "STOP_MARKET",
-          stopPrice: formatPrice(sl),
+          stopPrice: formatPrice(finalSl),
           closePosition: "true",
           timeInForce: "GTC"
         });
         
-        if (slOrder.orderId) console.log(`AutoTrade: [SL SET] ${symbol} @ ${formatPrice(sl)}`);
+        if (slOrder.orderId) console.log(`AutoTrade: [SL SET] ${symbol} @ ${formatPrice(finalSl)}`);
 
       } else {
         console.error(`AutoTrade: Entry Order Failed for ${symbol}:`, order.msg || JSON.stringify(order));
@@ -318,6 +347,22 @@ async function startServer() {
     }
 
     try {
+      // Helper to log scanner behavior to user dashboard
+      const logActivity = async (userId: string, symbol: string, msg: string, type: 'INFO' | 'SUCCESS' | 'ERROR' | 'WARNING') => {
+        try {
+          const logId = `log-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          await setDoc(doc(db, "activity", logId), {
+            userId,
+            symbol,
+            message: msg,
+            type,
+            timestamp: Date.now()
+          });
+        } catch (e) {
+          console.error("Scanner activity log fail:", e);
+        }
+      };
+
       // 1. Fetch symbols from Binance (Use multi-endpoint for robustness)
       let exchangeData: any = null;
       for (const base of BINANCE_ENDPOINTS) {
@@ -373,26 +418,15 @@ async function startServer() {
       const activeUsersCount = activeUsers.length;
       console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started. Active Users: ${activeUsersCount}`);
       
+      // Notify users in activity log that scanner is alive
+      for (const userDoc of activeUsers) {
+        logActivity(userDoc.id, "SYSTEM", `Background Scanner Active: Checking markets...`, 'INFO');
+      }
+
       if (activeUsersCount === 0) {
         console.log("Scanner: No active users with autoScan enabled. Stopping.");
         return;
       }
-
-      // Helper to log scanner behavior to user dashboard
-      const logActivity = async (userId: string, symbol: string, msg: string, type: 'INFO' | 'SUCCESS' | 'ERROR' | 'WARNING') => {
-        try {
-          const logId = `log-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-          await setDoc(doc(db, "activity", logId), {
-            userId,
-            symbol,
-            message: msg,
-            type,
-            timestamp: Date.now()
-          });
-        } catch (e) {
-          console.error("Scanner activity log fail:", e);
-        }
-      };
 
       const timeframes = [...new Set(activeUsers.map(u => u.data().timeframe || '5m'))];
       let totalSignalsFound = 0;
@@ -780,10 +814,10 @@ async function startServer() {
       await executeBinanceTrade(
         symbol,
         side as "BUY" | "SELL",
-        parseFloat(tradeAmount || '10'), // Use tradeAmount from request
-        0, // tp - not needed for test
-        0, // sl - not needed for test
-        5, // leverage
+        parseFloat(tradeAmount || '10'), // Margin
+        0, // TP (0 means calculate from settings)
+        0, // SL (0 means calculate from settings)
+        1, // Initial leverage (will be auto-boosted to hit notional floor if needed)
         binanceKey,
         binanceSecret,
         userId

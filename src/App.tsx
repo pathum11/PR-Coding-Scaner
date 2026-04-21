@@ -566,6 +566,12 @@ export default function App() {
     setScanResults([]);
     setScanProgress(0);
     
+    if (!btcTrend) {
+      setError("BTC Trend not yet loaded. Please wait for market status to sync (Check header).");
+      setScanning(false);
+      return;
+    }
+
     try {
       // Fetch Binance Futures symbols
       const exchangeInfoRes = await fetchWithRetry('/api/exchangeInfo');
@@ -722,10 +728,12 @@ export default function App() {
         // Minor pause to regulate API frequency and reduce CPU/Network load
         await new Promise(r => setTimeout(r, 500));
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Scan failed:', err);
+      setError(`Scanner Error: ${err.message || 'Check your internet connection or API status.'}`);
     } finally {
       setScanning(false);
+      setScanProgress(0);
       setCurrentScanning(null);
     }
   };
@@ -1015,19 +1023,20 @@ export default function App() {
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">Take Profit</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-rose-500">Stop Loss</th>
                       <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
+                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/50">
                     {scanResults.length === 0 && !scanning && (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center text-zinc-500">
+                        <td colSpan={7} className="p-12 text-center text-zinc-500">
                           No signals found. Click "Start Full Scan" to analyze the market.
                         </td>
                       </tr>
                     )}
                     {scanning && scanResults.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center">
+                        <td colSpan={7} className="p-12 text-center">
                           <div className="flex flex-col items-center gap-4">
                             <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                             <div className="space-y-1">
@@ -1081,6 +1090,20 @@ export default function App() {
                                minute: '2-digit',
                                hour12: false
                              })} <span className="text-[10px] opacity-70">IST</span>
+                           </td>
+                           <td className="p-4 text-right">
+                             <Button 
+                               size="sm"
+                               onClick={() => triggerManualTrade(res.symbol, res.type)}
+                               className={cn(
+                                 "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
+                                 res.type === 'BUY' 
+                                   ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
+                                   : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
+                               )}
+                             >
+                               Trade {res.type}
+                             </Button>
                            </td>
                         </motion.tr>
                       ))}
