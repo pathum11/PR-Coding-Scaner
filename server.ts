@@ -151,7 +151,9 @@ async function startServer() {
       if (Array.isArray(positions)) {
         const activePos = positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0);
         if (activePos) {
-          console.log(`AutoTrade: Skipped ${symbol} - Position already exists.`);
+          const msg = `Skipped trade for ${symbol} - Position already exists in your Binance account.`;
+          console.log(`AutoTrade: ${msg}`);
+          await logTradeActivity(msg, 'WARNING');
           return;
         }
       }
@@ -161,7 +163,9 @@ async function startServer() {
       if (Array.isArray(balanceRes)) {
         const usdtBal = balanceRes.find(b => b.asset === "USDT");
         if (!usdtBal || parseFloat(usdtBal.availableBalance) < tradeMargin) {
-          console.log(`AutoTrade: Skipped ${symbol} - Insufficient balance (${usdtBal?.availableBalance || 0} USDT)`);
+          const msg = `Skipped trade for ${symbol} - Insufficient balance (${usdtBal?.availableBalance || 0} USDT available). Need at least ${tradeMargin} USDT.`;
+          console.log(`AutoTrade: ${msg}`);
+          await logTradeActivity(msg, 'ERROR');
           return;
         }
       }
@@ -442,45 +446,46 @@ async function startServer() {
                   tpPct: settings.tpPct || 3.6
                 });
 
-                // Check the last closed candle
-                const last = results[results.length - 2];
-                if (!last) continue;
+                // Check recent closed candles (Lookback 30 minutes to match UI logic reliability)
+                const now = Date.now();
+                const lookbackMs = 30 * 60 * 1000;
+                const lookbackLimit = now - lookbackMs;
 
-                // USER REQUEST: Only trade coins with unit price <= 7 USDT
-                // We keep this filter but make it "silent" for coins that are way outside, 
-                // only log if a signal is actually there to inform user why it skipped.
-                if (last.close > 7) {
-                  const isSignal = last.buySignal || last.sellSignal;
-                  if (isSignal && last.close < 50) { // Only log "Close calls" or signals on reasonable coins
-                    console.log(`Scanner: Signal skipped for ${symbol} - Price (${last.close}) higher than 7 USDT limit.`);
-                    await logActivity(userDoc.id, symbol, `Signal detected but skipped: Price (${last.close}) is higher than your 7 USDT limit.`, 'WARNING');
-                  }
-                  continue;
-                }
+                let foundValidSignal = null;
 
-                const isBuy = last.buySignal;
-                const isSell = last.sellSignal;
+                // Loop backwards starting from the last closed candle (length - 2)
+                for (let i = results.length - 2; i >= 0; i--) {
+                  const candle = results[i];
+                  if (candle.time < lookbackLimit) break;
+
+                  // 1. Price Filter (Silent for way-out coins)
+                  if (candle.close > 7) continue;
+
+                  const isBuy = candle.buySignal;
+                  const isSell = candle.sellSignal;
                 
-                // FILTER: Align with BTC Trend
-                const isBtcBullish = btcTrend.startsWith("BULLISH");
-                const isBtcBearish = btcTrend.startsWith("BEARISH");
+                  // 2. BTC Trend Alignment
+                  const isBtcBullish = btcTrend.startsWith("BULLISH");
+                  const isBtcBearish = btcTrend.startsWith("BEARISH");
 
-                let signalType = "";
-                if (isBuy && isBtcBullish) signalType = "BUY";
-                if (isSell && isBtcBearish) signalType = "SELL";
+                  let signalType = "";
+                  if (isBuy && isBtcBullish) signalType = "BUY";
+                  if (isSell && isBtcBearish) signalType = "SELL";
 
-                if ((isBuy || isSell) && !signalType) {
-                  console.log(`Scanner: Signal for ${symbol} skipped - Does not align with BTC Trend (${btcTrend})`);
-                  await logActivity(userDoc.id, symbol, `Signal (${isBuy ? 'BUY' : 'SELL'}) skipped: Market context is not favorable (BTC Trend is ${btcTrend}).`, 'WARNING');
+                  if (signalType) {
+                    foundValidSignal = { candle, type: signalType };
+                    break; // Found the most recent valid one
+                  }
                 }
 
-                if (signalType) {
-                  const alertId = `${symbol}-${last.time}-${userDoc.id}-${signalType}`;
+                if (foundValidSignal) {
+                  const { candle, type: signalType } = foundValidSignal;
+                  const alertId = `${symbol}-${candle.time}-${userDoc.id}-${signalType}`;
                   const alertRef = doc(db, "alerts", alertId);
                   const alertSnap = await getDoc(alertRef);
 
                   if (!alertSnap.exists()) {
-                    console.log(`Scanner: Debugging Alert Data:`, JSON.stringify(last));
+                    console.log(`Scanner: Debugging Alert Data:`, JSON.stringify(candle));
                     const now = new Date();
                     const timeStr = now.toLocaleTimeString('en-GB');
                     const dateStr = now.toLocaleDateString('en-GB');
@@ -491,11 +496,11 @@ async function startServer() {
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
                                     `BTCUSDT.P Trend: <code>${btcTrend}</code>\n` +
-                                    `Symbol Trend: <code>${last.trend} ${last.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
-                                    `Entry Price: <code>${last.close}</code>\n` +
-                                    `Take Profit: <code>${last.tpPrice ? Number(last.tpPrice).toFixed(4) : '---'}</code>\n` +
-                                    `Stop Loss: <code>${last.slPrice ? Number(last.slPrice).toFixed(4) : '---'}</code>\n` +
-                                    `Recommended Leverage: <code>${last.recommendedLeverage || '7'}x</code>\n\n` +
+                                    `Symbol Trend: <code>${candle.trend} ${candle.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
+                                    `Entry Price: <code>${candle.close}</code>\n` +
+                                    `Take Profit: <code>${candle.tpPrice ? Number(candle.tpPrice).toFixed(4) : '---'}</code>\n` +
+                                    `Stop Loss: <code>${candle.slPrice ? Number(candle.slPrice).toFixed(4) : '---'}</code>\n` +
+                                    `Recommended Leverage: <code>${candle.recommendedLeverage || '7'}x</code>\n\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>\n` +
                                     `Message: AI Signal Confirmed ✅`;
@@ -527,8 +532,8 @@ async function startServer() {
                       id: alertId,
                       symbol,
                       type: signalType,
-                      price: last.close,
-                      time: last.time,
+                      price: candle.close,
+                      time: candle.time,
                       uid: userDoc.id,
                       sentAt: Date.now()
                     });
@@ -540,9 +545,9 @@ async function startServer() {
                         symbol, 
                         signalType as "BUY" | "SELL", 
                         settings.tradeAmount || 10, 
-                        last.tpPrice, 
-                        last.slPrice, 
-                        last.recommendedLeverage || 7, 
+                        candle.tpPrice, 
+                        candle.slPrice, 
+                        candle.recommendedLeverage || 7, 
                         settings.binanceKey, 
                         settings.binanceSecret,
                         userDoc.id
