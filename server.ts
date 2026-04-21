@@ -195,7 +195,12 @@ async function startServer() {
       } else {
         let errorMsg = order.msg || 'Unknown Error';
         if (errorMsg.includes("Invalid API-key") || errorMsg.includes("permissions") || errorMsg.includes("IP")) {
-          errorMsg = `Trade Failed: Invalid API Key, IP restriction, or missing Futures permissions. Fix: 1. Whitelist server IP in Binance settings. 2. Ensure "Enable Futures" is checked. 3. Use a Global Binance account (not US).`;
+          let currentIp = "34.96.48.151"; // Default/Fallback
+          try {
+            const ipRes = await fetch("https://api.ipify.org?format=json").then(r => r.json());
+            if (ipRes.ip) currentIp = ipRes.ip;
+          } catch(e) {}
+          errorMsg = `Trade Failed: API Key/Permission error. Fix: 1. Whitelist Server IP: ${currentIp} in Binance. 2. Enable "Futures" in API settings. 3. Ensure Global (not US) account.`;
         }
         console.error(`AutoTrade: FAILED - ${order.msg || 'Unknown Error'}`);
         await logTradeActivity(errorMsg, 'ERROR');
@@ -728,6 +733,16 @@ async function startServer() {
     }
 
     res.status(500).json({ error: lastError || "Failed to fetch klines from all Binance endpoints" });
+  });
+
+  app.get("/api/server-ip", async (req, res) => {
+    try {
+      const response = await fetch("https://api.ipify.org?format=json");
+      const data = await response.json();
+      res.json(data);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch server IP" });
+    }
   });
 
   app.post("/api/manual-trade", async (req, res) => {

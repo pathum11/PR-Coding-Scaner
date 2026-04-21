@@ -138,6 +138,12 @@ export default function App() {
   const [showBinanceSecret, setShowBinanceSecret] = useState(false);
   const [checkingBinance, setCheckingBinance] = useState(false);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [serverIp, setServerIp] = useState<string>('Loading...');
+
+  // Fetch Server IP
+  useEffect(() => {
+    fetch('/api/server-ip').then(r => r.json()).then(d => setServerIp(d.ip || 'Unknown')).catch(() => setServerIp('Error'));
+  }, []);
 
   // Sync with Firebase
   useEffect(() => {
@@ -1444,15 +1450,21 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="p-4 bg-black/40 rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-zinc-100 flex items-center gap-2 mb-2">
-                      <Info className="w-3 h-3 text-orange-500" /> Auto-Trade Safety
-                    </h4>
-                    <ul className="text-[10px] text-zinc-500 space-y-1 list-disc pl-4 leading-relaxed">
+                  <div className="p-4 bg-orange-500/10 rounded-xl border border-orange-500/20">
+                    <div className="flex justify-between items-center mb-2">
+                       <h4 className="text-xs font-bold text-orange-500 uppercase tracking-wider flex items-center gap-2">
+                        <Info className="w-3 h-3" /> Whitelist Required
+                      </h4>
+                      <div className="flex items-center gap-2 bg-black/40 px-2 py-0.5 rounded text-[10px] font-mono border border-white/5">
+                        <span className="text-zinc-500">SERVER IP:</span>
+                        <span className="text-zinc-100">{serverIp}</span>
+                      </div>
+                    </div>
+                    <ul className="text-[10px] text-zinc-300 space-y-1 list-disc pl-4 leading-relaxed">
+                      <li>Whitelist IP: <code className="bg-black/60 px-1 py-0.5 rounded text-orange-400 font-mono text-[10px]">{serverIp}</code> in Binance Settings.</li>
                       <li>Ensure API keys have <span className="text-orange-400 font-bold">"Enable Futures"</span> checked.</li>
+                      <li>Global Binance accounts only (Binance US is not supported).</li>
                       <li>Strategy uses Market Orders for entry, TP, and SL.</li>
-                      <li>Keys are only used on the server side (Cloud Scanner).</li>
-                      <li>Recommended leverage is applied automatically.</li>
                     </ul>
                   </div>
 
