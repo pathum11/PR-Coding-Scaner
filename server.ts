@@ -193,8 +193,12 @@ async function startServer() {
         console.log(`AutoTrade: SUCCESS - Order ${order.orderId} filled for ${symbol}`);
         await logTradeActivity(`SUCCESS: Order ${order.orderId} filled at ${currentPrice}`, 'SUCCESS');
       } else {
+        let errorMsg = order.msg || 'Unknown Error';
+        if (errorMsg.includes("Invalid API-key") || errorMsg.includes("permissions") || errorMsg.includes("IP")) {
+          errorMsg = `Trade Failed: Invalid API Key, IP restriction, or missing Futures permissions. Fix: 1. Whitelist server IP in Binance settings. 2. Ensure "Enable Futures" is checked. 3. Use a Global Binance account (not US).`;
+        }
         console.error(`AutoTrade: FAILED - ${order.msg || 'Unknown Error'}`);
-        await logTradeActivity(`FAILED: ${order.msg || 'Unknown Error'}`, 'ERROR');
+        await logTradeActivity(errorMsg, 'ERROR');
       }
 
       if (order.orderId) {
@@ -492,11 +496,11 @@ async function startServer() {
                     const dateStr = now.toLocaleDateString('en-GB');
                     const emoji = signalType === "BUY" ? "🟢" : "🔴";
 
-                    const message = `🚀 <b>Signal Alert: ${symbol}.P</b>\n\n` +
-                                    `COPY COIN: <code>${symbol}.P</code>\n\n` +
+                    const message = `🚀 <b>Signal Alert: ${symbol}</b>\n\n` +
+                                    `COPY COIN: <code>${symbol}</code>\n\n` +
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
-                                    `BTCUSDT.P Trend: <code>${btcTrend}</code>\n` +
+                                    `BTCUSDT Trend: <code>${btcTrend}</code>\n` +
                                     `Symbol Trend: <code>${candle.trend} ${candle.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
                                     `Entry Price: <code>${candle.close}</code>\n` +
                                     `Take Profit: <code>${candle.tpPrice ? Number(candle.tpPrice).toFixed(4) : '---'}</code>\n` +
@@ -522,7 +526,7 @@ async function startServer() {
                         signal: telController.signal
                       });
                       totalSignalsFound++;
-                      console.log(`Scanner: [SIGNAL SENT] ${symbol}.P ${signalType} ${tf} to User ${userDoc.id}`);
+                      console.log(`Scanner: [SIGNAL SENT] ${symbol} ${signalType} ${tf} to User ${userDoc.id}`);
                     } catch (err) {
                       console.error(`Scanner: Telegram Fail for ${symbol}:`, err);
                     } finally {

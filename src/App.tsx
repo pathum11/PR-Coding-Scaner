@@ -1026,7 +1026,7 @@ export default function App() {
                             <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                             <div className="space-y-1">
                               <p className="text-zinc-100 font-medium">Scanning {totalSymbols} Binance Futures... {scanProgress}%</p>
-                              <p className="text-zinc-500 text-xs font-mono">Analyzing {currentScanning}.P</p>
+                              <p className="text-zinc-500 text-xs font-mono">Analyzing {currentScanning}</p>
                             </div>
                           </div>
                         </td>
@@ -1044,10 +1044,10 @@ export default function App() {
                           <td className="p-4">
                             <div 
                               className="flex items-center gap-2 cursor-pointer group/copy hover:bg-orange-500/10 p-1 -ml-1 rounded transition-colors w-fit"
-                              onClick={() => copyToClipboard(res.symbol + '.P')}
+                              onClick={() => copyToClipboard(res.symbol)}
                               title="Click to copy symbol"
                             >
-                              <span className="font-bold text-zinc-100">{res.symbol}.P</span>
+                              <span className="font-bold text-zinc-100">{res.symbol}</span>
                               <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
                                 {copiedSymbol === res.symbol ? (
                                   <Check className="w-3 h-3 text-emerald-500" />
@@ -1573,10 +1573,10 @@ export default function App() {
                 <div className="flex justify-between items-start">
                   <div 
                     className="flex items-center gap-2 cursor-pointer group/copy hover:bg-white/5 px-1.5 py-0.5 -ml-1.5 rounded transition-colors"
-                    onClick={() => copyToClipboard(notif.symbol + '.P')}
+                    onClick={() => copyToClipboard(notif.symbol)}
                     title="Click to copy symbol"
                   >
-                    <h4 className="text-sm font-bold text-zinc-100">{notif.symbol}.P</h4>
+                    <h4 className="text-sm font-bold text-zinc-100">{notif.symbol}</h4>
                     <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
                       {copiedSymbol === notif.symbol ? (
                         <Check className="w-3 h-3 text-emerald-500" />
