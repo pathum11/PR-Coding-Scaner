@@ -430,7 +430,7 @@ export default function App() {
               symbol: alert.symbol,
               type: alert.type,
               time: new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' }),
-              message: `30m Alert: ${alert.symbol}.P ${alert.type} signal reached!`,
+              message: `30m Alert: ${alert.symbol} ${alert.type} signal reached!`,
               timestamp: Date.now()
             };
             
@@ -443,11 +443,11 @@ export default function App() {
             const emoji = alert.type === "BUY" ? "🟢" : "🔴";
             const btcTrendText = btcTrend ? `${btcTrend.trend} ${btcTrend.trend === 'BULLISH' ? '🟢' : '🔴'}` : 'SYNCING...';
             
-            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}.P</b>\n\n` +
-                            `COPY COIN: <code>${alert.symbol}.P</code>\n\n` +
+            const phoneMsg = `🚀 <b>Signal Alert: ${alert.symbol}</b>\n\n` +
+                            `COPY COIN: <code>${alert.symbol}</code>\n\n` +
                             `Type: <code>${alert.type} ${emoji}</code>\n` +
                             `Timeframe: <code>${timeframe}</code>\n` +
-                            `BTCUSDT.P Trend: <code>${btcTrendText}</code>\n` +
+                            `BTCUSDT Trend: <code>${btcTrendText}</code>\n` +
                             `Symbol Trend: <code>${alert.trend || 'N/A'} ${alert.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
                             `Take Profit: <code>${alert.tp ? Number(alert.tp).toFixed(4) : '---'}</code>\n` +
                             `Stop Loss: <code>${alert.sl ? Number(alert.sl).toFixed(4) : '---'}</code>\n` +
@@ -456,7 +456,7 @@ export default function App() {
                             `Message: AI Signal Confirmed ✅`;
 
             sendTelegramMessage(phoneMsg);
-            showPushNotification(`Signal Alert: ${alert.symbol}.P`, `${alert.type} signal reached!`);
+            showPushNotification(`Signal Alert: ${alert.symbol}`, `${alert.type} signal reached!`);
             
             // Auto dismiss floating notification after 8 seconds
             setTimeout(() => {
@@ -956,7 +956,7 @@ export default function App() {
             
             <div className="flex items-center gap-3">
               <Button 
-                onClick={() => triggerManualTrade('UMAUSDT.P', 'BUY')}
+                onClick={() => triggerManualTrade('UMAUSDT', 'BUY')}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white gap-2 shadow-[0_0_15px_rgba(5,150,105,0.3)] h-11 px-4 font-black uppercase text-xs transition-all active:scale-95"
               >
                 <Zap className="w-4 h-4" /> TEST BUY UMA

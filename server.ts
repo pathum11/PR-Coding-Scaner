@@ -731,16 +731,15 @@ async function startServer() {
     try {
       console.log(`AutoTrade: Initiating manual trade for User ${userId} on ${symbol}`);
       await executeBinanceTrade(
-        userId,
         symbol,
         side as "BUY" | "SELL",
-        0, // price - market order ignores this
+        parseFloat(tradeAmount || '10'), // Use tradeAmount from request
         0, // tp - not needed for test
         0, // sl - not needed for test
         5, // leverage
         binanceKey,
         binanceSecret,
-        parseFloat(tradeAmount || '10') // Use tradeAmount from request
+        userId
       );
       res.json({ success: true });
     } catch (error) {
