@@ -508,6 +508,15 @@ export default function App() {
           return fetchWithRetry(url, options, retries - 1, backoff * 2);
         }
       }
+      
+      // Safety check for non-JSON content from API routes
+      if (url.startsWith('/api/') && response.ok) {
+        const contentType = response.headers.get('content-type');
+        if (contentType && !contentType.includes('application/json')) {
+          throw new Error(`API returned ${contentType} instead of JSON. Check server logs.`);
+        }
+      }
+
       return response;
     } catch (error) {
       if (retries > 0) {
@@ -527,10 +536,17 @@ export default function App() {
       // Fetch Binance Futures symbols
       const exchangeInfoRes = await fetchWithRetry('/api/exchangeInfo');
       if (!exchangeInfoRes.ok) {
-        const errData = await exchangeInfoRes.json().catch(() => ({ error: 'Unknown' }));
+        const errData = await exchangeInfoRes.json().catch(() => ({ error: 'Unknown server error' }));
         throw new Error(`Exchange Info failed: ${errData.error || exchangeInfoRes.status}`);
       }
-      const exchangeInfo = await exchangeInfoRes.json();
+      
+      let exchangeInfo;
+      try {
+        exchangeInfo = await exchangeInfoRes.json();
+      } catch (e) {
+        throw new Error("Failed to parse exchange info. Server might be blocked.");
+      }
+
       if (!exchangeInfo.symbols) {
         throw new Error("Invalid exchange info received");
       }
@@ -560,16 +576,22 @@ export default function App() {
             const klinesRes = await fetchWithRetry(`/api/klines?symbol=${encodeURIComponent(s)}&interval=${timeframe}&limit=500`);
             
             if (!klinesRes.ok) {
-              const errData = await klinesRes.json().catch(() => ({ error: "Unknown error" }));
+              const errData = await klinesRes.json().catch(() => ({ error: `Status ${klinesRes.status}` }));
               if (klinesRes.status === 404 || klinesRes.status === 400) {
-                // 400 often means invalid symbol on Binance
                 return;
               }
               console.warn(`Scanner: [${s}] ${klinesRes.status} - ${errData.error}`);
               return;
             }
             
-            const data = await klinesRes.json();
+            let data;
+            try {
+              data = await klinesRes.json();
+            } catch (e) {
+              console.warn(`Scanner: [${s}] Failed to parse JSON response`);
+              return;
+            }
+
             if (!Array.isArray(data) || data.length === 0) return;
 
             const formatted: Candle[] = data.map((d: any) => ({
@@ -715,7 +737,14 @@ export default function App() {
     try {
       const response = await fetchWithRetry(`/api/klines?symbol=BTCUSDT&interval=${currentTF}&limit=100`);
       if (response.ok) {
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (e) {
+          console.warn("BTC Trend: Failed to parse JSON response");
+          return;
+        }
+        
         const formatted: Candle[] = data.map((d: any) => ({
           time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
         }));

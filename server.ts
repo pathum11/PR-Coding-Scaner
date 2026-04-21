@@ -66,9 +66,7 @@ async function startServer() {
   const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'CRVUSDT', 'SUSHIUSDT'];
   const BINANCE_ENDPOINTS = [
     'https://fapi.binance.com',
-    'https://fapi1.binance.com',
-    'https://fapi2.binance.com',
-    'https://fapi3.binance.com'
+    'https://fapi-gcp.binance.com'
   ];
 
   // Simple In-Memory Cache to prevent constant fetching from Binance
@@ -245,12 +243,23 @@ async function startServer() {
           return fetchWithRetry(url, retries - 1, backoff * 2);
         }
         if (response.status === 451) {
-          // Blocked region
           throw new Error("Binance Blocked: 451 (Likely US Region)");
         }
-        throw new Error(`HTTP ${response.status}`);
+        const errText = await response.text().catch(() => "Unknown error body");
+        throw new Error(`HTTP ${response.status}: ${errText.substring(0, 100)}`);
       }
-      return await response.json();
+
+      const contentType = response.headers.get('content-type');
+      if (contentType && !contentType.includes('application/json')) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`Expected JSON but received ${contentType}. Start: ${text.substring(0, 50)}`);
+      }
+
+      try {
+        return await response.json();
+      } catch (jsonErr: any) {
+        throw new Error(`Failed to parse JSON: ${jsonErr.message}`);
+      }
     } catch (e) {
       if (retries > 0) {
         await new Promise(r => setTimeout(r, backoff));
@@ -667,7 +676,7 @@ async function startServer() {
         clearTimeout(timeout);
 
         if (!response.ok) {
-          const text = await response.text();
+          const text = await response.text().catch(() => "Unknown body");
           if (response.status === 429) {
             console.error(`Scanner: Rate limited by ${base}`);
             return res.status(429).json({ error: "Binance Rate Limit", details: text });
@@ -676,15 +685,26 @@ async function startServer() {
           continue; 
         }
 
-        const data = await response.json();
-        
-        // Cache BTC klines
-        if (symbol === 'BTCUSDT') {
-          const cacheKey = `${symbol}-${interval}`;
-          cachedBtcKlines.set(cacheKey, { data, timestamp: Date.now() });
+        const contentType = response.headers.get('content-type');
+        if (contentType && !contentType.includes('application/json')) {
+          lastError = `Expected JSON from ${base} but received ${contentType}`;
+          continue;
         }
 
-        return res.json(data);
+        try {
+          const data = await response.json();
+          
+          // Cache BTC klines
+          if (symbol === 'BTCUSDT') {
+            const cacheKey = `${symbol}-${interval}`;
+            cachedBtcKlines.set(cacheKey, { data, timestamp: Date.now() });
+          }
+
+          return res.json(data);
+        } catch (jsonErr: any) {
+          lastError = `JSON parse err from ${base}: ${jsonErr.message}`;
+          continue;
+        }
       } catch (error: any) {
         clearTimeout(timeout);
         lastError = error.name === 'AbortError' ? "Request timed out" : error.message;
@@ -721,19 +741,28 @@ async function startServer() {
         clearTimeout(timeout);
 
         if (response.ok) {
-          const data = await response.json();
-          // Update cache
-          cachedExchangeInfo = data;
-          lastExchangeInfoFetch = Date.now();
-          return res.json(data);
-        }
-
-        const text = await response.text();
-        lastStatus = response.status;
-        lastError = `Binance Proxy Error (${response.status}): ${text.substring(0, 100)}`;
-        
-        if (response.status === 451 || response.status === 403) {
-          console.error(`Scanner: Endpoint ${base} is BLOCKED (Status ${response.status})`);
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            try {
+              const data = await response.json();
+              // Update cache
+              cachedExchangeInfo = data;
+              lastExchangeInfoFetch = Date.now();
+              return res.json(data);
+            } catch (jsonErr: any) {
+              lastError = `ExchangeInfo JSON parse fail: ${jsonErr.message}`;
+            }
+          } else {
+            lastError = `ExchangeInfo expected JSON from ${base} but got ${contentType}`;
+          }
+        } else {
+          const text = await response.text().catch(() => "Unknown body");
+          lastStatus = response.status;
+          lastError = `Binance Proxy Error (${response.status}) from ${base}: ${text.substring(0, 100)}`;
+          
+          if (response.status === 451 || response.status === 403) {
+            console.error(`Scanner: Endpoint ${base} is BLOCKED (Status ${response.status})`);
+          }
         }
       } catch (error: any) {
         clearTimeout(timeout);
