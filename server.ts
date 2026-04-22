@@ -101,215 +101,177 @@ async function startServer() {
   let cachedBtcKlines = new Map<string, { data: any, timestamp: number }>();
   const BTC_KLINES_CACHE_TTL = 60 * 1000; // 1 min
 
-  const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string, userId: string) => {
-    const baseUrl = "https://fapi.binance.com";
-    
-    // Function to log trade activity for the user to see in UI
-    const logTradeActivity = async (msg: string, type: 'INFO' | 'SUCCESS' | 'ERROR' | 'WARNING') => {
-      try {
-        const logId = `log-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-        await setDoc(doc(db, "activity", logId), {
-          userId,
-          symbol,
-          message: msg,
-          type,
-          timestamp: Date.now()
-        });
-      } catch (e) {
-        console.error("Failed to log activity to Firestore:", e);
-      }
-    };
-
-    await logTradeActivity(`Initiating ${side} order for ${symbol}...`, 'INFO');
-    
-    // Use the amount from settings, fallback to 10 if invalid
-    const tradeMargin = amount > 0 ? amount : 10;
-
-    const sign = (queryString: string) => crypto.createHmac('sha256', apiSecret).update(queryString).digest('hex');
-
-    const apiCall = async (path: string, method: string, params: any) => {
-      const ts = Date.now();
-      const queryString = new URLSearchParams({ ...params, timestamp: ts.toString() }).toString();
-      const signature = sign(queryString);
-      const url = `${baseUrl}${path}?${queryString}&signature=${signature}`;
-      return fetch(url, {
-        method,
-        headers: { 'X-MBX-APIKEY': apiKey }
-      }).then(async r => {
-        const data = await r.json();
-        if (data.code === -2015) {
-           const sIp = await getServerIp();
-           console.error(`AutoTrade: [SECURITY ERROR] Symbol: ${symbol}, Method: ${method}, Path: ${path}. Msg: ${data.msg}. Ensure IP ${sIp} is whitelisted and 'Enable Futures' is checked.`);
-        }
-        return data;
-      });
-    };
-
+  // Global Helpers for Trading
+  const logTradeActivity = async (userId: string, symbol: string, msg: string, type: 'INFO' | 'SUCCESS' | 'ERROR' | 'WARNING') => {
     try {
-      // 0. Fetch User Settings for TP/SL fallbacks
-      let finalTp = tp;
-      let finalSl = sl;
-      let finalLeverage = leverage;
-      let tpPnLFallback = 0.30;
-      let slPnLFallback = 0.10;
-
-      if (tp === 0 || sl === 0) {
-        const settingsSnap = await getDoc(doc(db, "settings", userId));
-        if (settingsSnap.exists()) {
-          const s = settingsSnap.data();
-          tpPnLFallback = s.tpPct || 0.30;
-          slPnLFallback = s.slPct || 0.10;
-          if (leverage === 1) finalLeverage = s.leverage || 9;
-        }
-      }
-
-      // 0.1 Get Symbol Rules (IMPORTANT for Filter Failures)
-      let symInfo: any = null;
-      for (const base of BINANCE_ENDPOINTS) {
-        try {
-          const res = await fetch(`${base}/fapi/v1/exchangeInfo`).then(r => r.json());
-          symInfo = res.symbols.find((s: any) => s.symbol === symbol);
-          if (symInfo) break;
-        } catch (e) {}
-      }
-
-      if (!symInfo) {
-        console.error(`AutoTrade: Error fetching rules for ${symbol}. Checked endpoints: ${BINANCE_ENDPOINTS.join(', ')}`);
-        await logTradeActivity(`Error: Could not retrieve trading rules for ${symbol}. Please check if the symbol exists on Binance Futures.`, 'ERROR');
-        return;
-      }
-
-      const priceFilter = symInfo.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
-      const lotFilter = symInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');
-      
-      const tickSize = parseFloat(priceFilter.tickSize);
-      const stepSize = parseFloat(lotFilter.stepSize);
-
-      const formatPrice = (p: number) => {
-        const precision = Math.max(0, Math.round(-Math.log10(tickSize)));
-        return p.toFixed(precision);
-      };
-
-      const formatQty = (q: number) => {
-        const precision = Math.max(0, Math.round(-Math.log10(stepSize)));
-        return q.toFixed(precision);
-      };
-
-      // 0. Check for existing position
-      const positions = await apiCall("/fapi/v2/positionRisk", "GET", { symbol });
-      if (Array.isArray(positions)) {
-        const activePos = positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0);
-        if (activePos) {
-          const msg = `Skipped trade for ${symbol} - Position already exists in your Binance account.`;
-          console.log(`AutoTrade: ${msg}`);
-          await logTradeActivity(msg, 'WARNING');
-          return;
-        }
-      }
-
-      // 0.1 Check Wallet Balance
-      const balanceRes = await apiCall("/fapi/v2/balance", "GET", {});
-      if (Array.isArray(balanceRes)) {
-        const usdtBal = balanceRes.find(b => b.asset === "USDT");
-        if (!usdtBal || parseFloat(usdtBal.availableBalance) < tradeMargin) {
-          const msg = `Skipped trade for ${symbol} - Insufficient balance (${usdtBal?.availableBalance || 0} USDT available). Need at least ${tradeMargin} USDT.`;
-          console.log(`AutoTrade: ${msg}`);
-          await logTradeActivity(msg, 'ERROR');
-          return;
-        }
-      }
-
-      // 0.2 Notional Safety Check (Binance Min is 5 USDT)
-      const MIN_NOTIONAL = 5.2; 
-      let effectiveLeverage = leverage;
-      
-      if (tradeMargin * effectiveLeverage < MIN_NOTIONAL) {
-        effectiveLeverage = Math.ceil(MIN_NOTIONAL / tradeMargin);
-        // Cap to preventing excessive risk, but ensure we pass the floor
-        if (effectiveLeverage > 50) effectiveLeverage = 50; 
-        console.log(`AutoTrade: Boosting leverage for ${symbol} to ${effectiveLeverage} to hit 5 USDT min notional (Margin: ${tradeMargin})`);
-      }
-
-      // 1. Get Position Mode (Hedge vs One-way)
-      const modeRes = await apiCall("/fapi/v1/positionSide/dual", "GET", {});
-      const isHedgeMode = modeRes.dualSidePosition; // true = Hedge Mode, false = One-way Mode
-      
-      // Define positionSide based on mode and signal
-      // One-way: BOTH
-      // Hedge: LONG or SHORT
-      const positionSide = isHedgeMode ? (side === "BUY" ? "LONG" : "SHORT") : "BOTH";
-
-      // 1.5 Set Margin Type to ISOLATED
-      try {
-        await apiCall("/fapi/v1/marginType", "POST", { symbol, marginType: "ISOLATED" });
-        console.log(`AutoTrade: Margin Type set to ISOLATED for ${symbol}`);
-      } catch (e) {
-        console.warn(`AutoTrade: Margin Type already set or skipped for ${symbol}`);
-      }
-
-      // 1.5 Set Leverage
-      await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: effectiveLeverage.toString() });
-
-      // 2. Market Order
-      const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
-      const currentPrice = parseFloat(priceRes.price);
-
-      // Recalculate TP/SL if they were missing or invalid using PnL based logic
-      const isBuy = side === "BUY";
-      const notional = tradeMargin * effectiveLeverage;
-      
-      if (finalTp === 0 || (isBuy && finalTp <= currentPrice) || (!isBuy && finalTp >= currentPrice)) {
-        const tpPriceChange = (tpPnLFallback / notional) * currentPrice;
-        finalTp = isBuy ? currentPrice + tpPriceChange : currentPrice - tpPriceChange;
-      }
-      if (finalSl === 0 || (isBuy && finalSl >= currentPrice) || (!isBuy && finalSl <= currentPrice)) {
-        const slPriceChange = (slPnLFallback / notional) * currentPrice;
-        finalSl = isBuy ? currentPrice - slPriceChange : currentPrice + slPriceChange;
-      }
-      
-      let qty = formatQty((tradeMargin * effectiveLeverage) / currentPrice); 
-      
-      // Secondary check: If qty * price is still < 5 (due to rounding), add one stepSize
-      if (parseFloat(qty) * currentPrice < 5.0) {
-        qty = formatQty(parseFloat(qty) + stepSize);
-      }
-      
-      const order = await apiCall("/fapi/v1/order", "POST", {
+      const logId = `log-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      await setDoc(doc(db, "activity", logId), {
+        userId,
         symbol,
-        side,
-        positionSide,
-        type: "MARKET",
-        quantity: qty
+        message: msg,
+        type,
+        timestamp: Date.now()
       });
-
-      console.log(`AutoTrade: Order Response for ${symbol}:`, JSON.stringify(order));
-
-      if (order.orderId) {
-        console.log(`AutoTrade: SUCCESS - Order ${order.orderId} filled for ${symbol}`);
-        await logTradeActivity(`SUCCESS: Order ${order.orderId} filled at ${currentPrice}`, 'SUCCESS');
-      } else {
-        let errorMsg = order.msg || 'Unknown Error';
-        if (errorMsg.includes("Invalid API-key") || errorMsg.includes("permissions") || errorMsg.includes("IP")) {
-          let currentIp = "34.96.48.151"; // Default/Fallback
-          try {
-            const ipRes = await fetch("https://api.ipify.org?format=json").then(r => r.json());
-            if (ipRes.ip) currentIp = ipRes.ip;
-          } catch(e) {}
-          errorMsg = `Trade Failed: API Key/Permission error. Fix: 1. Whitelist Server IP: ${currentIp} in Binance. 2. Enable "Futures" in API settings. 3. Ensure Global (not US) account.`;
-        }
-        console.error(`AutoTrade: FAILED - ${order.msg || 'Unknown Error'}`);
-        await logTradeActivity(errorMsg, 'ERROR');
-      }
-
-      if (order.orderId) {
-        console.log(`AutoTrade: [ENTRY SUCCESS] ${symbol} ${side} @ ${currentPrice} - OrderId: ${order.orderId}`);
-      }
-
-
-    } catch (e: any) {
-      console.error(`AutoTrade: Execution Error for ${symbol}:`, e.message);
+    } catch (e) {
+      console.error("Failed to log activity to Firestore:", e);
     }
   };
+
+  const sign = (queryString: string, apiSecret: string) => crypto.createHmac('sha256', apiSecret).update(queryString).digest('hex');
+
+  const apiCall = async (path: string, method: string, params: any, apiKey: string, apiSecret: string) => {
+    const ts = Date.now();
+    const queryString = new URLSearchParams({ ...params, timestamp: ts.toString() }).toString();
+    const signature = sign(queryString, apiSecret);
+    const url = `https://fapi.binance.com${path}?${queryString}&signature=${signature}`;
+    return fetch(url, {
+      method,
+      headers: { 'X-MBX-APIKEY': apiKey }
+    }).then(async r => {
+      const data = await r.json();
+      if (data.code === -2015) {
+         const sIp = await getServerIp();
+         console.error(`Binance Error: [SECURITY ERROR] Path: ${path}. Msg: ${data.msg}. Ensure IP ${sIp} is whitelisted.`);
+      }
+      return data;
+    });
+  };
+
+    const executeBinanceTrade = async (symbol: string, side: "BUY" | "SELL", amount: number, tp: number, sl: number, leverage: number, apiKey: string, apiSecret: string, userId: string) => {
+      const apiCallInternal = async (path: string, method: string, params: any) => apiCall(path, method, params, apiKey, apiSecret);
+      const logInternal = async (msg: string, type: any) => logTradeActivity(userId, symbol, msg, type);
+
+      try {
+        await logInternal(`Initiating ${side} order for ${symbol}...`, 'INFO');
+        const tradeMargin = amount > 0 ? amount : 10;
+        
+        let finalTp = tp;
+        let finalSl = sl;
+        let finalLeverage = leverage;
+        let tpPnLFallback = 0.30;
+        let slPnLFallback = 0.10;
+
+        if (tp === 0 || sl === 0) {
+          const settingsSnap = await getDoc(doc(db, "settings", userId));
+          if (settingsSnap.exists()) {
+            const s = settingsSnap.data();
+            tpPnLFallback = s.tpPct || 0.30;
+            slPnLFallback = s.slPct || 0.10;
+            if (leverage === 1) finalLeverage = s.leverage || 9;
+          }
+        }
+
+        // 0.1 Get Symbol Rules
+        let symInfo: any = null;
+        for (const base of BINANCE_ENDPOINTS) {
+          try {
+            const res = await fetch(`${base}/fapi/v1/exchangeInfo`).then(r => r.json());
+            symInfo = res.symbols.find((s: any) => s.symbol === symbol);
+            if (symInfo) break;
+          } catch (e) {}
+        }
+        if (!symInfo) throw new Error(`Could not retrieve rules for ${symbol}`);
+
+        const priceFilter = symInfo.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
+        const lotFilter = symInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');
+        const tickSize = parseFloat(priceFilter.tickSize);
+        const stepSize = parseFloat(lotFilter.stepSize);
+        const formatPrice = (p: number) => {
+          const precision = Math.max(0, Math.round(-Math.log10(tickSize)));
+          return p.toFixed(precision);
+        };
+        const formatQty = (q: number) => {
+          const precision = Math.max(0, Math.round(-Math.log10(stepSize)));
+          return q.toFixed(precision);
+        };
+
+        // 0. Check for existing position
+        const positions = await apiCallInternal("/fapi/v2/positionRisk", "GET", { symbol });
+        if (Array.isArray(positions)) {
+          const activePos = positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0);
+          if (activePos) {
+            await logInternal(`Skipped: Position already exists for ${symbol}.`, 'WARNING');
+            return;
+          }
+        }
+
+        // 1. Position side & Margin Mode
+        const modeRes = await apiCallInternal("/fapi/v1/positionSide/dual", "GET", {});
+        const isHedgeMode = modeRes.dualSidePosition;
+        const positionSide = isHedgeMode ? (side === "BUY" ? "LONG" : "SHORT") : "BOTH";
+
+        try {
+          await apiCallInternal("/fapi/v1/marginType", "POST", { symbol, marginType: "ISOLATED" });
+        } catch (e) {}
+
+        // 2. Leverage Floor (5 USDT min)
+        let effectiveLeverage = finalLeverage;
+        if ((tradeMargin * effectiveLeverage) < 5.5) {
+          effectiveLeverage = Math.ceil(6.0 / tradeMargin);
+          if (effectiveLeverage > 100) effectiveLeverage = 100;
+        }
+        await apiCallInternal("/fapi/v1/leverage", "POST", { symbol, leverage: effectiveLeverage.toString() });
+
+        // 3. Market Order
+        const priceRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
+        const currentPrice = parseFloat(priceRes.price);
+        const isBuy = side === "BUY";
+        const notional = tradeMargin * effectiveLeverage;
+        
+        if (finalTp === 0 || (isBuy && finalTp <= currentPrice) || (!isBuy && finalTp >= currentPrice)) {
+          finalTp = isBuy ? currentPrice + (tpPnLFallback / notional) * currentPrice : currentPrice - (tpPnLFallback / notional) * currentPrice;
+        }
+        if (finalSl === 0 || (isBuy && finalSl >= currentPrice) || (!isBuy && finalSl <= currentPrice)) {
+          finalSl = isBuy ? currentPrice - (slPnLFallback / notional) * currentPrice : currentPrice + (slPnLFallback / notional) * currentPrice;
+        }
+
+        let qtyValue = (tradeMargin * effectiveLeverage) / currentPrice;
+        let qty = formatQty(qtyValue);
+        if (parseFloat(qty) * currentPrice < 5.0) {
+          qty = formatQty(parseFloat(qty) + stepSize);
+        }
+
+        const order = await apiCallInternal("/fapi/v1/order", "POST", {
+          symbol, side, positionSide, type: "MARKET", quantity: qty
+        });
+
+        if (order.orderId) {
+          await logInternal(`SUCCESS: Order ${order.orderId} filled at ${currentPrice}`, 'SUCCESS');
+          
+          // Wait for position to stabilize
+          await new Promise(resolve => setTimeout(resolve, 60000));
+          const tpSide = side === "BUY" ? "SELL" : "BUY";
+
+          // TP
+          const tpOrder = await apiCallInternal("/fapi/v1/order", "POST", {
+            symbol, side: tpSide, positionSide, type: "TAKE_PROFIT_MARKET", stopPrice: formatPrice(finalTp), workingType: "MARK_PRICE", closePosition: "true"
+          });
+          if (tpOrder.orderId) await logInternal(`TP Set @ ${formatPrice(finalTp)}`, 'INFO');
+          else if (tpOrder.msg?.includes("Order type not supported") || tpOrder.msg?.includes("Algo")) {
+            await apiCallInternal("/fapi/v1/order", "POST", {
+              symbol, side: tpSide, positionSide, type: "LIMIT", price: formatPrice(finalTp), quantity: qty, timeInForce: "GTC", reduceOnly: "true"
+            });
+            await logInternal(`TP Set (Limit) @ ${formatPrice(finalTp)}`, 'INFO');
+          }
+
+          // SL
+          const slOrder = await apiCallInternal("/fapi/v1/order", "POST", {
+            symbol, side: tpSide, positionSide, type: "STOP_MARKET", stopPrice: formatPrice(finalSl), workingType: "MARK_PRICE", closePosition: "true"
+          });
+          if (slOrder.orderId) await logInternal(`SL Set @ ${formatPrice(finalSl)}`, 'INFO');
+          else if (slOrder.msg?.includes("Order type not supported") || slOrder.msg?.includes("Algo")) {
+            await apiCallInternal("/fapi/v1/order", "POST", {
+              symbol, side: tpSide, positionSide, type: "LIMIT", price: formatPrice(finalSl), quantity: qty, timeInForce: "GTC", reduceOnly: "true"
+            });
+            await logInternal(`SL Set (Limit) @ ${formatPrice(finalSl)}`, 'INFO');
+          }
+        } else {
+          await logInternal(`FAILED: ${order.msg || 'Unknown Error'}`, 'ERROR');
+        }
+      } catch (err: any) {
+        console.error("Trade Execution Error:", err.message);
+      }
+    };
 
   const fetchWithRetry = async (url: string, retries = 3, backoff = 1000): Promise<any> => {
     try {
@@ -868,14 +830,92 @@ async function startServer() {
     const { symbol, side, binanceKey, binanceSecret, userId, tp, sl, step } = req.body;
     try {
       console.log(`AutoTrade: Setting TP/SL step ${step} for User ${userId} on ${symbol}`);
-      // Reuse existing trading functions if possible, or implement direct calls
-      // For this solution, we assume executeBinanceTrade handles TP/SL if we call it with specific flags
-      // Since our executeBinanceTrade places ORDER first then TP/SL, we might need a modified function.
-      // Easiest patch: just rely on the existing logic if Step is BUY
+      
+      // Get Symbol Rules for formatting
+      let symInfo: any = null;
+      for (const base of BINANCE_ENDPOINTS) {
+        try {
+          const exInfo = await fetch(`${base}/fapi/v1/exchangeInfo`).then(r => r.json());
+          symInfo = exInfo.symbols.find((s: any) => s.symbol === symbol);
+          if (symInfo) break;
+        } catch (e) {}
+      }
+
+      if (!symInfo) throw new Error("Could not fetch symbol rules for TP/SL");
+
+      const priceFilter = symInfo.filters.find((f: any) => f.filterType === 'PRICE_FILTER');
+      const tickSize = parseFloat(priceFilter.tickSize);
+      const formatPrice = (p: number) => {
+        const precision = Math.max(0, Math.round(-Math.log10(tickSize)));
+        return p.toFixed(precision);
+      };
+
+      // Get Position Side Mode
+      const modeRes = await apiCall("/fapi/v1/positionSide/dual", "GET", {}, binanceKey, binanceSecret);
+      const isHedgeMode = modeRes.dualSidePosition;
+      const posSide = isHedgeMode ? (side === "BUY" ? "LONG" : "SHORT") : "BOTH";
+      const targetSide = side === "BUY" ? "SELL" : "BUY";
+
+      if (step === 'TP') {
+        const params: any = {
+          symbol,
+          side: targetSide,
+          positionSide: posSide,
+          type: "TAKE_PROFIT_MARKET",
+          stopPrice: formatPrice(tp),
+          workingType: "MARK_PRICE",
+          closePosition: "true"
+        };
+        let order = await apiCall("/fapi/v1/order", "POST", params, binanceKey, binanceSecret);
+        
+        if (!order.orderId && (order.msg?.includes("Order type not supported") || order.msg?.includes("Algo"))) {
+          console.log(`AutoTrade: Manual TP failed with Algo error, retrying with LIMIT for ${symbol}`);
+          // For LIMIT TP, we need the quantity. In manual mode, we might not have it easily available in the request body
+          // But since the user is likely closing a full position, we can try to fetch the position size
+          const positions = await apiCall("/fapi/v2/positionRisk", "GET", { symbol }, binanceKey, binanceSecret);
+          const activePos = Array.isArray(positions) ? positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0) : null;
+          if (activePos) {
+            const absQty = Math.abs(parseFloat(activePos.positionAmt)).toString();
+            order = await apiCall("/fapi/v1/order", "POST", {
+              symbol, side: targetSide, positionSide: posSide, type: "LIMIT", price: formatPrice(tp), quantity: absQty, timeInForce: "GTC", reduceOnly: "true"
+            }, binanceKey, binanceSecret);
+          }
+        }
+        
+        if (!order.orderId) throw new Error(order.msg || "TP Placement failed");
+        await logTradeActivity(userId, symbol, `Manual TP Set @ ${formatPrice(tp)}`, 'INFO');
+      } else if (step === 'SL') {
+        const params: any = {
+          symbol,
+          side: targetSide,
+          positionSide: posSide,
+          type: "STOP_MARKET",
+          stopPrice: formatPrice(sl),
+          workingType: "MARK_PRICE",
+          closePosition: "true"
+        };
+        let order = await apiCall("/fapi/v1/order", "POST", params, binanceKey, binanceSecret);
+        
+        if (!order.orderId && (order.msg?.includes("Order type not supported") || order.msg?.includes("Algo"))) {
+          console.log(`AutoTrade: Manual SL failed with Algo error, retrying with LIMIT for ${symbol}`);
+          const positions = await apiCall("/fapi/v2/positionRisk", "GET", { symbol }, binanceKey, binanceSecret);
+          const activePos = Array.isArray(positions) ? positions.find(p => p.symbol === symbol && parseFloat(p.positionAmt) !== 0) : null;
+          if (activePos) {
+            const absQty = Math.abs(parseFloat(activePos.positionAmt)).toString();
+            order = await apiCall("/fapi/v1/order", "POST", {
+              symbol, side: targetSide, positionSide: posSide, type: "LIMIT", price: formatPrice(sl), quantity: absQty, timeInForce: "GTC", reduceOnly: "true"
+            }, binanceKey, binanceSecret);
+          }
+        }
+        
+        if (!order.orderId) throw new Error(order.msg || "SL Placement failed");
+        await logTradeActivity(userId, symbol, `Manual SL Set @ ${formatPrice(sl)}`, 'INFO');
+      }
+
       res.json({ success: true });
-    } catch (error) {
-      console.error("Manual TP/SL Error:", error);
-      res.status(500).json({ error: String(error) });
+    } catch (error: any) {
+      console.error("Manual TP/SL Error:", error.message);
+      res.status(500).json({ error: error.message });
     }
   });
 
