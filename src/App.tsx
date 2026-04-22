@@ -454,10 +454,12 @@ export default function App() {
               timestamp: Date.now()
             };
             
+            /* 
             setNotifications(n => {
               if (n.find(item => item.id === alert.id)) return n;
               return [newNotification, ...n].slice(0, 5);
             });
+            */
 
             // Send Phone Notifications
             const emoji = alert.type === "BUY" ? "🟢" : "🔴";
@@ -1138,6 +1140,7 @@ export default function App() {
                 </CardContent>
               </Card>
             </div>
+          </div>
 
             {/* Sidebar Section */}
             <div className="space-y-6">
@@ -1663,54 +1666,7 @@ export default function App() {
             </div>
           </div>
         </div>
-      </div>
-    </main>
-      {/* Notification Overlay */}
-      <div className="fixed bottom-6 right-6 z-50 space-y-3 pointer-events-none">
-        <AnimatePresence>
-          {notifications.map((notif) => (
-            <motion.div
-              key={notif.id}
-              initial={{ opacity: 0, x: 50, scale: 0.9 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 20, scale: 0.95 }}
-              className="bg-orange-950 border border-orange-500/50 p-4 rounded-xl shadow-2xl w-80 pointer-events-auto flex gap-4 items-start"
-            >
-              <div className="bg-orange-500/20 p-2 rounded-lg">
-                <BellRing className="w-5 h-5 text-orange-500" />
-              </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start">
-                  <div 
-                    className="flex items-center gap-2 cursor-pointer group/copy hover:bg-white/5 px-1.5 py-0.5 -ml-1.5 rounded transition-colors"
-                    onClick={() => copyToClipboard(notif.symbol)}
-                    title="Click to copy symbol"
-                  >
-                    <h4 className="text-sm font-bold text-zinc-100">{notif.symbol}</h4>
-                    <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
-                      {copiedSymbol === notif.symbol ? (
-                        <Check className="w-3 h-3 text-emerald-500" />
-                      ) : (
-                        <Copy className="w-3 h-3 text-zinc-400" />
-                      )}
-                    </div>
-                  </div>
-                  <span className="text-[10px] text-zinc-500">{notif.time}</span>
-                </div>
-                <p className="text-xs text-zinc-300 mt-1">{notif.message}</p>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="h-6 text-[10px] mt-2 text-zinc-500 hover:text-zinc-300 p-0"
-                  onClick={() => setNotifications(prev => prev.filter(n => n.id !== notif.id))}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      </main>
     </div>
   );
 }
