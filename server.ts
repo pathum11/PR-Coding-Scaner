@@ -278,7 +278,7 @@ async function startServer() {
           side: tpSide,
           positionSide,
           closePosition: "true",
-          workingType: "MARK_PRICE"
+          workingType: "CONTRACT_PRICE"
         };
 
         if (hasTpMarket) {
@@ -287,18 +287,47 @@ async function startServer() {
         } else if (hasTpLimit) {
           tpParams.type = "TAKE_PROFIT";
           tpParams.stopPrice = formatPrice(finalTp);
-          tpParams.price = formatPrice(finalTp); // Limit versions need price
+          tpParams.price = formatPrice(finalTp);
           tpParams.timeInForce = "GTC";
         } else {
-          // Absolute fallback: try MARKET if nothing else matches (though risky)
-          tpParams.type = "TAKE_PROFIT_MARKET";
-          tpParams.stopPrice = formatPrice(finalTp);
+          // If neither TP Market or TP Limit are in symInfo, fall back to a standard LIMIT with reduction logic
+          tpParams.type = "LIMIT";
+          tpParams.price = formatPrice(finalTp);
+          tpParams.timeInForce = "GTC";
+          tpParams.quantity = qty; // Use exact quantity as fallback
+          if (!isHedgeMode) tpParams.reduceOnly = "true"; // Only use reduceOnly in One-Way mode
+          delete tpParams.closePosition;
+          delete tpParams.workingType;
         }
 
-        const tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
+        let tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
+        
+        // Multi-stage retry logic if any "Algo Order", "Parameter", or "not supported" errors occur
+        if (!tpOrder.orderId && tpOrder.msg && (tpOrder.msg.includes("Algo Order API") || tpOrder.msg.includes("Parameter") || tpOrder.msg.includes("not supported"))) {
+          console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 1: Alternative workingType)...`);
+          if (tpParams.workingType === "CONTRACT_PRICE") {
+            tpParams.workingType = "MARK_PRICE";
+            tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
+          }
+          
+          if (!tpOrder.orderId) {
+            console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 2: LIMIT fallback)...`);
+            const fallbackTpParams: any = {
+              symbol,
+              side: tpSide,
+              positionSide,
+              type: "LIMIT",
+              price: formatPrice(finalTp),
+              timeInForce: "GTC",
+              quantity: qty
+            };
+            if (!isHedgeMode) fallbackTpParams.reduceOnly = "true";
+            tpOrder = await apiCall("/fapi/v1/order", "POST", fallbackTpParams);
+          }
+        }
 
         if (tpOrder.orderId) {
-          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)} (Mode: ${tpParams.type})`);
+          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)} (Mode: ${tpOrder.type})`);
           await logTradeActivity(`TP Set: ${symbol} @ ${formatPrice(finalTp)}`, 'INFO');
         } else {
           console.error(`AutoTrade: [TP FAILED] ${symbol}:`, tpOrder.msg || JSON.stringify(tpOrder));
@@ -314,7 +343,7 @@ async function startServer() {
           side: tpSide,
           positionSide,
           closePosition: "true",
-          workingType: "MARK_PRICE"
+          workingType: "CONTRACT_PRICE"
         };
 
         if (hasSlMarket) {
@@ -330,10 +359,50 @@ async function startServer() {
           slParams.stopPrice = formatPrice(finalSl);
         }
 
-        const slOrder = await apiCall("/fapi/v1/order", "POST", slParams);
+        let slOrder = await apiCall("/fapi/v1/order", "POST", slParams);
+
+        if (!slOrder.orderId && slOrder.msg && (slOrder.msg.includes("Algo Order API") || slOrder.msg.includes("invalid") || slOrder.msg.includes("Parameter") || slOrder.msg.includes("not supported"))) {
+           console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 1: Alternate workingType)...`);
+           const stage1Params = { ...slParams, workingType: slParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" };
+           slOrder = await apiCall("/fapi/v1/order", "POST", stage1Params);
+
+           if (!slOrder.orderId) {
+              const altType = slParams.type === "STOP_MARKET" ? "STOP" : "STOP_MARKET";
+              console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 2: Alternate Type ${altType})...`);
+              const fallbackSlParams: any = {
+                 symbol,
+                 side: tpSide,
+                 positionSide,
+                 type: altType,
+                 stopPrice: formatPrice(finalSl),
+                 workingType: "CONTRACT_PRICE",
+                 quantity: qty
+              };
+              if (altType === "STOP") {
+                 fallbackSlParams.price = formatPrice(finalSl);
+                 fallbackSlParams.timeInForce = "GTC";
+              }
+              if (!isHedgeMode) fallbackSlParams.reduceOnly = "true";
+              slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
+
+              if (!slOrder.orderId) {
+                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 3: MARK_PRICE fallback)...`);
+                fallbackSlParams.workingType = "MARK_PRICE";
+                slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
+              }
+           }
+        }
         
         if (slOrder.orderId) {
-          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (Mode: ${slParams.type})`);
+          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (Mode: ${slOrder.type})`);
+          await logTradeActivity(`SL Set: ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
+        } else {
+          console.error(`AutoTrade: [SL FAILED] ${symbol}:`, slOrder.msg || JSON.stringify(slOrder));
+          await logTradeActivity(`Failed to set SL for ${symbol}: ${slOrder.msg || 'Unknown Error'}`, 'ERROR');
+        }
+        
+        if (slOrder.orderId) {
+          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (Mode: ${slOrder.type || slParams.type})`);
           await logTradeActivity(`SL Set: ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
         } else {
           console.error(`AutoTrade: [SL FAILED] ${symbol}:`, slOrder.msg || JSON.stringify(slOrder));
@@ -460,18 +529,13 @@ async function startServer() {
 
       const activeUsers = usersSnap.docs.filter((doc: any) => {
         const data = doc.data();
-        return data.autoScan === true;
+        return data.autoScan === true || data.autoTradeEnabled === true;
       });
       const activeUsersCount = activeUsers.length;
       console.log(`Scanner: [${new Date().toLocaleTimeString()}] Analysis started. Active Users: ${activeUsersCount}`);
       
-      // Notify users in activity log that scanner is alive
-      for (const userDoc of activeUsers) {
-        logActivity(userDoc.id, "SYSTEM", `Background Scanner Active: Checking markets...`, 'INFO');
-      }
-
       if (activeUsersCount === 0) {
-        console.log("Scanner: No active users with autoScan enabled. Stopping.");
+        console.log("Scanner: No active users with autoScan or autoTrade enabled. Skipping.");
         return;
       }
 
@@ -587,13 +651,35 @@ async function startServer() {
                   const isBtcBearish = btcTrend.startsWith("BEARISH");
 
                   let signalType = "";
-                  if (isBuy && isBtcBullish) signalType = "BUY";
-                  if (isSell && isBtcBearish) signalType = "SELL";
+                  if (isBuy) {
+                    if (isBtcBullish) {
+                      signalType = "BUY";
+                    } else {
+                      // Log mismatch once in a while or silently
+                      console.log(`Scanner: [MISMATCH] ${symbol} BUY signal but BTC is ${btcTrend}`);
+                    }
+                  }
+                  if (isSell) {
+                    if (isBtcBearish) {
+                      signalType = "SELL";
+                    } else {
+                      console.log(`Scanner: [MISMATCH] ${symbol} SELL signal but BTC is ${btcTrend}`);
+                    }
+                  }
 
                   if (signalType) {
                     foundValidSignal = { candle, type: signalType };
                     break; // Found the most recent valid one
                   }
+                }
+
+                // Heartbeat log every 10 mins to show scanner is alive
+                const lastHeartbeat = (global as any).lastScannerHeartbeat || {};
+                const userLast = lastHeartbeat[userDoc.id] || 0;
+                if (now - userLast > 10 * 60 * 1000) {
+                  logActivity(userDoc.id, "SYSTEM", `Heartbeat: Scanner is actively monitoring ${allSymbols.length} USDT symbols on ${tf} timeframe.`, 'INFO');
+                  if (!(global as any).lastScannerHeartbeat) (global as any).lastScannerHeartbeat = {};
+                  (global as any).lastScannerHeartbeat[userDoc.id] = now;
                 }
 
                 if (foundValidSignal) {
@@ -845,9 +931,25 @@ async function startServer() {
 
   app.get("/api/server-ip", async (req, res) => {
     try {
-      const response = await fetch("https://api.ipify.org?format=json");
-      const data = await response.json();
-      res.json(data);
+      // Try multiple services for robustness
+      const providers = [
+        "https://api.ipify.org?format=json",
+        "https://ifconfig.me/all.json"
+      ];
+      
+      for (const url of providers) {
+        try {
+          const response = await fetch(url, { timeout: 5000 } as any);
+          if (response.ok) {
+            const data = await response.json();
+            const ip = data.ip || data.ip_addr;
+            if (ip) return res.json({ ip });
+          }
+        } catch (e) {
+          console.warn(`Server: Failed to fetch IP from ${url}`);
+        }
+      }
+      res.status(500).json({ error: "Failed to fetch server IP from all providers" });
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch server IP" });
     }
