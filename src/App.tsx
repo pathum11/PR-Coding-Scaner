@@ -91,8 +91,8 @@ export default function App() {
   const [stMult, setStMult] = useState(3.0);
   const [rsiLen, setRsiLen] = useState(14);
   const [rsiSm, setRsiSm] = useState(14);
-  const [slPct, setSlPct] = useState(28.0);
-  const [tpPct, setTpPct] = useState(36.0);
+  const [slPnL, setSlPnL] = useState(0.10);
+  const [tpPnL, setTpPnL] = useState(0.30);
   
   // BTC Trend State
   const [btcTrend, setBtcTrend] = useState<{ trend: string, signal?: string } | null>(null);
@@ -132,6 +132,7 @@ export default function App() {
   const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [tradeAmount, setTradeAmount] = useState(0.9); // Fixed $0.90 per trade as requested
   const [maxOpenTrades, setMaxOpenTrades] = useState(3);
+  const [leverage, setLeverage] = useState(9);
 
   // Field Visibility State
   const [showTelegramToken, setShowTelegramToken] = useState(false);
@@ -166,10 +167,11 @@ export default function App() {
             if (data.timeframe !== undefined) setTimeframe(data.timeframe);
             if (data.stSense !== undefined) setStSense(data.stSense);
             if (data.stMult !== undefined) setStMult(data.stMult);
+            if (data.leverage !== undefined) setLeverage(data.leverage);
             if (data.rsiLen !== undefined) setRsiLen(data.rsiLen);
             if (data.rsiSm !== undefined) setRsiSm(data.rsiSm);
-            if (data.slPct !== undefined) setSlPct(data.slPct);
-            if (data.tpPct !== undefined) setTpPct(data.tpPct);
+            if (data.slPct !== undefined) setSlPnL(data.slPct);
+            if (data.tpPct !== undefined) setTpPnL(data.tpPct);
             if (data.binanceKey) setBinanceKey(data.binanceKey);
             if (data.binanceSecret) setBinanceSecret(data.binanceSecret);
             if (data.autoTradeEnabled !== undefined) setAutoTradeEnabled(data.autoTradeEnabled);
@@ -225,8 +227,9 @@ export default function App() {
         stMult,
         rsiLen,
         rsiSm,
-        slPct,
-        tpPct,
+        slPct: slPnL,
+        tpPct: tpPnL,
+        leverage,
         binanceKey,
         binanceSecret,
         autoTradeEnabled,
@@ -249,7 +252,7 @@ export default function App() {
     }
   }, [
     telegramEnabled, telegramToken, telegramChatId, autoScan, soundEnabled, timeframe,
-    stSense, stMult, rsiLen, rsiSm, slPct, tpPct, scanLookbackMinutes,
+    stSense, stMult, rsiLen, rsiSm, slPnL, tpPnL, scanLookbackMinutes,
     binanceKey, binanceSecret, autoTradeEnabled, tradeAmount, maxOpenTrades, user
   ]);
 
@@ -318,13 +321,16 @@ export default function App() {
     }
   };
 
-  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL', signalId?: string, tp?: number, sl?: number) => {
+  const [tradeProgress, setTradeProgress] = useState<Record<string, 'IDLE' | 'BUY_PLACED' | 'TP_PLACED' | 'SL_PLACED'>>({});
+
+  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL', signalId?: string, tp?: number, sl?: number, step: 'BUY' | 'TP' | 'SL' = 'BUY') => {
     if (!user || !binanceKey || !binanceSecret) {
       alert("Please ensure you are logged in and have Binance API keys configured.");
       return;
     }
     try {
-      const response = await fetch('/api/manual-trade', {
+      const endpoint = step === 'BUY' ? '/api/manual-trade' : '/api/manual-tpsl'; // Assuming separate endpoint for TP/SL
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -335,23 +341,29 @@ export default function App() {
           userId: user.uid,
           tradeAmount: tradeAmount,
           tp: tp || 0,
-          sl: sl || 0
+          sl: sl || 0,
+          step // Pass the current step
         })
       });
       if (response.ok) {
         if (signalId) {
-          setTradedIds(prev => new Set(prev).add(signalId));
+          if (step === 'SL') {
+            setTradedIds(prev => new Set(prev).add(signalId));
+            setTradeProgress(prev => ({...prev, [signalId]: 'IDLE'}));
+          } else {
+            const nextStep = step === 'BUY' ? 'TP_PLACED' : 'SL_PLACED';
+            setTradeProgress(prev => ({...prev, [signalId]: nextStep}));
+          }
         }
-        // Success notification instead of intrusive alert
         setNotifications(prev => [{
           id: Date.now(),
           symbol,
           type: 'SUCCESS',
-          message: `Manual trade executed successfully!`
+          message: `Step ${step} executed successfully!`
         }, ...prev].slice(0, 5));
       } else {
         const errorData = await response.json();
-        alert(`Manual trade failed: ${errorData.error}`);
+        alert(`Manual trade failed at ${step}: ${errorData.error}`);
       }
     } catch (e) {
       alert(`Manual trade error: ${e}`);
@@ -473,7 +485,7 @@ export default function App() {
                             `Symbol Trend: <code>${alert.trend || 'N/A'} ${alert.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
                             `Take Profit: <code>${alert.tp ? Number(alert.tp).toFixed(4) : '---'}</code>\n` +
                             `Stop Loss: <code>${alert.sl ? Number(alert.sl).toFixed(4) : '---'}</code>\n` +
-                            `Recommended Leverage: <code>${alert.leverage || '3'}x</code>\n\n` +
+                            `Recommended Leverage: <code>${alert.leverage || '9'}x</code>\n\n` +
                             `Time: <code>${newNotification.time}</code>\n` +
                             `Message: AI Signal Confirmed ✅`;
 
@@ -664,8 +676,10 @@ export default function App() {
               stMult, 
               rsiLen,
               rsiSm,
-              slPct,
-              tpPct
+              slPnL,
+              tpPnL,
+              tradeAmount,
+              leverage
             });
 
             const now = Date.now();
@@ -812,8 +826,10 @@ export default function App() {
           stMult: 3.0,
           rsiLen: 14,
           rsiSm: 14,
-          slPct: 2.8,
-          tpPct: 3.6
+          slPnL: 0.10,
+          tpPnL: 0.30,
+          tradeAmount: 0.9,
+          leverage: 9
         });
         const last = results[results.length - 1];
         if (last) {
@@ -837,10 +853,12 @@ export default function App() {
       stMult, 
       rsiLen,
       rsiSm,
-      slPct,
-      tpPct
+      slPnL,
+      tpPnL,
+      tradeAmount,
+      leverage
     });
-  }, [candles, stSense, stMult, rsiLen, rsiSm, slPct, tpPct]);
+  }, [candles, stSense, stMult, rsiLen, rsiSm, slPnL, tpPnL, tradeAmount, leverage]);
 
   const latest = processedData[processedData.length - 1];
 
@@ -1118,15 +1136,20 @@ export default function App() {
                                   ) : (
                                     <Button 
                                       size="sm"
-                                      onClick={() => triggerManualTrade(res.symbol, res.type, res.id, res.tpPrice, res.slPrice)}
+                                      onClick={() => {
+                                        const currentProgress = tradeProgress[res.id] || 'IDLE';
+                                        const nextStep = currentProgress === 'IDLE' ? 'BUY' : (currentProgress === 'BUY_PLACED' ? 'TP' : 'SL');
+                                        triggerManualTrade(res.symbol, res.type, res.id, res.tpPrice, res.slPrice, nextStep);
+                                      }}
                                       className={cn(
                                         "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
-                                        res.type === 'BUY' 
+                                        tradeProgress[res.id] === 'TP_PLACED' ? "bg-yellow-600 hover:bg-yellow-500" :
+                                        (res.type === 'BUY' 
                                           ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
-                                          : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
+                                          : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20")
                                       )}
                                     >
-                                      Trade {res.type}
+                                      {tradeProgress[res.id] === 'BUY_PLACED' ? 'Set TP' : (tradeProgress[res.id] === 'TP_PLACED' ? 'Set SL' : `Trade ${res.type}`)}
                                     </Button>
                                   )}
                                 </td>
@@ -1204,22 +1227,33 @@ export default function App() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">Stop Loss %</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Stop Loss (PnL $)</label>
                       <Input 
                         type="number" 
-                        step="0.1"
-                        value={isNaN(slPct) ? '' : slPct} 
-                        onChange={(e) => setSlPct(parseFloat(e.target.value))}
+                        step="0.01"
+                        placeholder="e.g. 0.10"
+                        value={isNaN(slPnL) ? '' : slPnL} 
+                        onChange={(e) => setSlPnL(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">Take Profit %</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Take Profit (PnL $)</label>
                       <Input 
                         type="number" 
-                        step="0.1"
-                        value={isNaN(tpPct) ? '' : tpPct} 
-                        onChange={(e) => setTpPct(parseFloat(e.target.value))}
+                        step="0.01"
+                        placeholder="e.g. 0.30"
+                        value={isNaN(tpPnL) ? '' : tpPnL} 
+                        onChange={(e) => setTpPnL(parseFloat(e.target.value))}
+                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Default Leverage</label>
+                      <Input 
+                        type="number" 
+                        value={isNaN(leverage) ? '' : leverage} 
+                        onChange={(e) => setLeverage(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>

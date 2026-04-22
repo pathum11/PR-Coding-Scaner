@@ -169,8 +169,10 @@ export function processIndicators(candles: Candle[], settings: {
   stMult: number,
   rsiLen: number,
   rsiSm: number,
-  slPct: number,
-  tpPct: number
+  slPnL: number,
+  tpPnL: number,
+  tradeAmount: number,
+  leverage: number
 }) {
   if (!candles || candles.length === 0) return [];
 
@@ -189,6 +191,8 @@ export function processIndicators(candles: Candle[], settings: {
   let currentTpPrice: number | null = null;
   let position: 'LONG' | 'SHORT' | null = null;
   let hasSignalInTrend = false;
+
+  const notional = settings.tradeAmount * settings.leverage;
 
   return candles.map((candle, i) => {
     const currentST = superTrend[i];
@@ -218,24 +222,26 @@ export function processIndicators(candles: Candle[], settings: {
       hasSignalInTrend = true;
     }
 
-    // SL/TP Calculation (Modified for Fixed Percentage)
-    const slFactor = settings.slPct / 100;
-    const tpFactor = settings.tpPct / 100;
-
-    if (buySignal) {
-      const sl = candle.close * (1.0 - slFactor);
-      const tp = candle.close * (1.0 + tpFactor);
-      
-      currentSlPrice = Number(sl.toFixed(5));
-      currentTpPrice = Number(tp.toFixed(5));
-      position = 'LONG';
-    } else if (sellSignal) {
-      const sl = candle.close * (1.0 + slFactor);
-      const tp = candle.close * (1.0 - tpFactor);
-      
-      currentSlPrice = Number(sl.toFixed(5));
-      currentTpPrice = Number(tp.toFixed(5));
-      position = 'SHORT';
+    // SL/TP Calculation (Modified for Fixed PnL in USD)
+    if (notional > 0) {
+      if (buySignal) {
+        // TP = Close + (TP_PnL / Notional_Value * Close)
+        // PriceIncrease = (TP_PnL / (Margin * Leverage)) * Price
+        // TP = Price * (1 + (TP_PnL / PositionSize))
+        const priceChangeTP = (settings.tpPnL / notional) * candle.close;
+        const priceChangeSL = (settings.slPnL / notional) * candle.close;
+        
+        currentSlPrice = Number((candle.close - priceChangeSL).toFixed(5));
+        currentTpPrice = Number((candle.close + priceChangeTP).toFixed(5));
+        position = 'LONG';
+      } else if (sellSignal) {
+        const priceChangeTP = (settings.tpPnL / notional) * candle.close;
+        const priceChangeSL = (settings.slPnL / notional) * candle.close;
+        
+        currentSlPrice = Number((candle.close + priceChangeSL).toFixed(5));
+        currentTpPrice = Number((candle.close - priceChangeTP).toFixed(5));
+        position = 'SHORT';
+      }
     }
 
     // TP/SL Exit simulation (optional for historical view)
@@ -267,9 +273,9 @@ export function processIndicators(candles: Candle[], settings: {
       slPrice: currentSlPrice,
       tpPrice: currentTpPrice,
       recommendedLeverage: (() => {
-        if (!currentSlPrice || !candle.close) return 7;
+        if (!currentSlPrice || !candle.close) return 9;
         const diff = Math.abs(candle.close - currentSlPrice) / candle.close;
-        if (diff < 0.0001) return 7;
+        if (diff < 0.0001) return 9;
         const suggested = Math.floor(0.20 / diff);
         return Math.max(1, Math.min(20, suggested));
       })(),

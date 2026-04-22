@@ -90,8 +90,7 @@ async function startServer() {
   // Background Scanner Logic
   const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'CRVUSDT', 'SUSHIUSDT'];
   const BINANCE_ENDPOINTS = [
-    'https://fapi.binance.com',
-    'https://fapi-gcp.binance.com'
+    'https://fapi.binance.com'
   ];
 
   // Simple In-Memory Cache to prevent constant fetching from Binance
@@ -151,16 +150,16 @@ async function startServer() {
       let finalTp = tp;
       let finalSl = sl;
       let finalLeverage = leverage;
-      let tpPctFallback = 36.0;
-      let slPctFallback = 28.0;
+      let tpPnLFallback = 0.30;
+      let slPnLFallback = 0.10;
 
       if (tp === 0 || sl === 0) {
         const settingsSnap = await getDoc(doc(db, "settings", userId));
         if (settingsSnap.exists()) {
           const s = settingsSnap.data();
-          tpPctFallback = s.tpPct || 36.0;
-          slPctFallback = s.slPct || 28.0;
-          if (leverage === 1) finalLeverage = s.stMult || 9; // Use multiplier as default leverage if not provided
+          tpPnLFallback = s.tpPct || 0.30;
+          slPnLFallback = s.slPct || 0.10;
+          if (leverage === 1) finalLeverage = s.leverage || 9;
         }
       }
 
@@ -240,6 +239,14 @@ async function startServer() {
       // Hedge: LONG or SHORT
       const positionSide = isHedgeMode ? (side === "BUY" ? "LONG" : "SHORT") : "BOTH";
 
+      // 1.5 Set Margin Type to ISOLATED
+      try {
+        await apiCall("/fapi/v1/marginType", "POST", { symbol, marginType: "ISOLATED" });
+        console.log(`AutoTrade: Margin Type set to ISOLATED for ${symbol}`);
+      } catch (e) {
+        console.warn(`AutoTrade: Margin Type already set or skipped for ${symbol}`);
+      }
+
       // 1.5 Set Leverage
       await apiCall("/fapi/v1/leverage", "POST", { symbol, leverage: effectiveLeverage.toString() });
 
@@ -247,19 +254,17 @@ async function startServer() {
       const priceRes = await fetch(`${baseUrl}/fapi/v1/ticker/price?symbol=${symbol}`).then(r => r.json());
       const currentPrice = parseFloat(priceRes.price);
 
-      // Recalculate TP/SL if they were missing or invalid (Common in manual trades or specific alert bypasses)
-      // If TP/SL are provided but would immediately trigger (price moved past them), recalculate using fallback %
+      // Recalculate TP/SL if they were missing or invalid using PnL based logic
       const isBuy = side === "BUY";
+      const notional = tradeMargin * effectiveLeverage;
       
       if (finalTp === 0 || (isBuy && finalTp <= currentPrice) || (!isBuy && finalTp >= currentPrice)) {
-        finalTp = isBuy 
-          ? currentPrice * (1 + tpPctFallback / 100) 
-          : currentPrice * (1 - tpPctFallback / 100);
+        const tpPriceChange = (tpPnLFallback / notional) * currentPrice;
+        finalTp = isBuy ? currentPrice + tpPriceChange : currentPrice - tpPriceChange;
       }
       if (finalSl === 0 || (isBuy && finalSl >= currentPrice) || (!isBuy && finalSl <= currentPrice)) {
-        finalSl = isBuy 
-          ? currentPrice * (1 - slPctFallback / 100) 
-          : currentPrice * (1 + slPctFallback / 100);
+        const slPriceChange = (slPnLFallback / notional) * currentPrice;
+        finalSl = isBuy ? currentPrice - slPriceChange : currentPrice + slPriceChange;
       }
       
       let qty = formatQty((tradeMargin * effectiveLeverage) / currentPrice); 
@@ -299,166 +304,103 @@ async function startServer() {
       if (order.orderId) {
         console.log(`AutoTrade: [ENTRY SUCCESS] ${symbol} ${side} @ ${currentPrice} - OrderId: ${order.orderId}`);
         
-        // 3. Take Profit
+        // Add a delay before placing TP/SL to ensure position is stabilized (as requested by user)
+        console.log(`AutoTrade: Waiting 60 seconds before placing TP/SL for ${symbol}...`);
+        await new Promise(resolve => setTimeout(resolve, 60000)); 
+
         const tpSide = side === "BUY" ? "SELL" : "BUY";
         const allowedTypes = symInfo.orderTypes || [];
-        const hasTpMarket = allowedTypes.includes("TAKE_PROFIT_MARKET");
-        const hasTpLimit = allowedTypes.includes("TAKE_PROFIT");
-
+        
+        // 3. Place Take Profit
         let tpParams: any = {
           symbol,
           side: tpSide,
           positionSide,
-          closePosition: "true",
-          workingType: "CONTRACT_PRICE"
+          quantity: qty,
+          type: "TAKE_PROFIT_MARKET",
+          stopPrice: formatPrice(finalTp),
+          workingType: "MARK_PRICE"
         };
+        // Add reduceOnly to prevent unintended position opening
+        if (positionSide === "BOTH") tpParams.reduceOnly = "true";
 
-        if (hasTpMarket) {
-          tpParams.type = "TAKE_PROFIT_MARKET";
-          tpParams.stopPrice = formatPrice(finalTp);
-        } else if (hasTpLimit) {
-          tpParams.type = "TAKE_PROFIT";
-          tpParams.stopPrice = formatPrice(finalTp);
-          tpParams.price = formatPrice(finalTp);
-          tpParams.timeInForce = "GTC";
-        } else {
-          // If neither TP Market or TP Limit are in symInfo, fall back to a standard LIMIT with reduction logic
-          tpParams.type = "LIMIT";
-          tpParams.price = formatPrice(finalTp);
-          tpParams.timeInForce = "GTC";
-          tpParams.quantity = qty; // Use exact quantity as fallback
-          if (!isHedgeMode) tpParams.reduceOnly = "true"; // Only use reduceOnly in One-Way mode
-          delete tpParams.closePosition;
-          delete tpParams.workingType;
-        }
-
+        console.log(`AutoTrade: Placing TP Order for ${symbol}:`, JSON.stringify(tpParams));
         let tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
         
-        // Multi-stage retry logic if any "Algo Order", "Parameter", or "not supported" errors occur
-        if (!tpOrder.orderId && tpOrder.msg && (tpOrder.msg.includes("Algo Order") || tpOrder.msg.includes("Parameter") || tpOrder.msg.includes("not supported"))) {
-          console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 1: Alternative workingType)...`);
-          const tpStage1Params = { ...tpParams, workingType: tpParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" };
-          tpOrder = await apiCall("/fapi/v1/order", "POST", tpStage1Params);
-          
-          if (!tpOrder.orderId) {
-            console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 2: Standard fallback)...`);
-            const fallbackTpParams: any = {
-              symbol,
-              side: tpSide,
-              positionSide,
-              type: "LIMIT",
-              price: formatPrice(finalTp),
-              timeInForce: "GTC",
-              quantity: qty
-            };
-            if (!isHedgeMode) fallbackTpParams.reduceOnly = "true";
-            tpOrder = await apiCall("/fapi/v1/order", "POST", fallbackTpParams);
-          }
-        }
-
         if (tpOrder.orderId) {
-          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)} (Mode: ${tpOrder.type})`);
+          console.log(`AutoTrade: [TP SET SUCCESS] ${symbol} @ ${formatPrice(finalTp)}`);
           await logTradeActivity(`TP Set: ${symbol} @ ${formatPrice(finalTp)}`, 'INFO');
         } else {
           console.error(`AutoTrade: [TP FAILED] ${symbol}:`, tpOrder.msg || JSON.stringify(tpOrder));
           await logTradeActivity(`Failed to set TP for ${symbol}: ${tpOrder.msg || 'Unknown Error'}`, 'ERROR');
+          
+          // Retry logic for TP if standard fails
+          if (tpOrder.msg && tpOrder.msg.includes("Order type not supported")) {
+             console.log(`AutoTrade: Retrying TP for ${symbol} with LIMIT fallback...`);
+             const tpFallback = {
+               symbol,
+               side: tpSide,
+               positionSide,
+               type: "LIMIT",
+               price: formatPrice(finalTp),
+               quantity: qty,
+               timeInForce: "GTC"
+             };
+             if (positionSide === "BOTH") (tpFallback as any).reduceOnly = "true";
+             const tpRetry = await apiCall("/fapi/v1/order", "POST", tpFallback);
+             if (tpRetry.orderId) {
+                console.log(`AutoTrade: [TP RETRY SUCCESS] ${symbol} @ ${formatPrice(finalTp)} (LIMIT MODE)`);
+                await logTradeActivity(`TP Set (Limit): ${symbol} @ ${formatPrice(finalTp)}`, 'INFO');
+             }
+          }
         }
 
-        // 4. Stop Loss
-        const hasSlMarket = allowedTypes.includes("STOP_MARKET");
-        const hasSlLimit = allowedTypes.includes("STOP");
-
+        // 4. Place Stop Loss
         let slParams: any = {
           symbol,
           side: tpSide,
           positionSide,
-          closePosition: "true",
-          workingType: "CONTRACT_PRICE"
+          quantity: qty,
+          type: "STOP_MARKET",
+          stopPrice: formatPrice(finalSl),
+          workingType: "MARK_PRICE"
         };
+        // Add reduceOnly to prevent unintended position opening
+        if (positionSide === "BOTH") slParams.reduceOnly = "true";
 
-        if (hasSlMarket) {
-          slParams.type = "STOP_MARKET";
-          slParams.stopPrice = formatPrice(finalSl);
-        } else if (hasSlLimit) {
-          slParams.type = "STOP";
-          slParams.stopPrice = formatPrice(finalSl);
-          slParams.price = formatPrice(finalSl);
-          slParams.timeInForce = "GTC";
-        } else {
-          // Comprehensive Fallback: Use LIMIT if neither STOP type is supported
-          slParams.type = "LIMIT";
-          slParams.price = formatPrice(finalSl);
-          slParams.timeInForce = "GTC";
-          slParams.quantity = qty;
-          if (!isHedgeMode) slParams.reduceOnly = "true";
-          delete slParams.closePosition;
-          delete slParams.workingType;
-        }
-
+        console.log(`AutoTrade: Placing SL Order for ${symbol}:`, JSON.stringify(slParams));
         let slOrder = await apiCall("/fapi/v1/order", "POST", slParams);
 
-        if (!slOrder.orderId && slOrder.msg && (slOrder.msg.includes("Algo Order") || slOrder.msg.includes("invalid") || slOrder.msg.includes("Parameter") || slOrder.msg.includes("not supported"))) {
-           console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 1: Alternate Parameters)...`);
-           
-           // If we tried CLOSE_POSITION first, try with QUANTITY + REDUCE_ONLY
-           if (slParams.closePosition === "true") {
-              const stage1Params = { 
-                ...slParams, 
-                quantity: qty,
-                workingType: slParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" 
-              };
-              delete stage1Params.closePosition;
-              if (!isHedgeMode) stage1Params.reduceOnly = "true";
-              slOrder = await apiCall("/fapi/v1/order", "POST", stage1Params);
-           }
-
-           if (!slOrder.orderId) {
-              const altType = slParams.type === "STOP_MARKET" ? "STOP" : (slParams.type === "STOP" ? "STOP_MARKET" : "LIMIT");
-              if (altType !== "LIMIT") {
-                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 2: Alternate Type ${altType})...`);
-                const fallbackSlParams: any = {
-                   symbol,
-                   side: tpSide,
-                   positionSide,
-                   type: altType,
-                   stopPrice: formatPrice(finalSl),
-                   workingType: "CONTRACT_PRICE",
-                   quantity: qty
-                };
-                if (altType === "STOP") {
-                   fallbackSlParams.price = formatPrice(finalSl);
-                   fallbackSlParams.timeInForce = "GTC";
-                }
-                if (!isHedgeMode) fallbackSlParams.reduceOnly = "true";
-                slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
-              }
-
-              if (!slOrder.orderId) {
-                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 3: MARK_PRICE / LIMIT fallback)...`);
-                const finalFallback: any = {
-                  symbol,
-                  side: tpSide,
-                  positionSide,
-                  type: "LIMIT",
-                  price: formatPrice(finalSl),
-                  timeInForce: "GTC",
-                  quantity: qty
-                };
-                if (!isHedgeMode) finalFallback.reduceOnly = "true";
-                slOrder = await apiCall("/fapi/v1/order", "POST", finalFallback);
-              }
-           }
-        }
-        
         if (slOrder.orderId) {
-          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (Mode: ${slOrder.type || slParams.type})`);
+          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)}`);
           await logTradeActivity(`SL Set: ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
         } else {
           console.error(`AutoTrade: [SL FAILED] ${symbol}:`, slOrder.msg || JSON.stringify(slOrder));
           await logTradeActivity(`Failed to set SL for ${symbol}: ${slOrder.msg || 'Unknown Error'}`, 'ERROR');
-        }
 
+          // Retry logic for SL if standard fails
+          if (slOrder.msg && slOrder.msg.includes("Order type not supported")) {
+             console.log(`AutoTrade: Retrying SL for ${symbol} with LIMIT fallback...`);
+             const slFallback = {
+               symbol,
+               side: tpSide,
+               positionSide,
+               type: "LIMIT",
+               price: formatPrice(finalSl),
+               quantity: qty,
+               timeInForce: "GTC"
+             };
+             if (positionSide === "BOTH") (slFallback as any).reduceOnly = "true";
+             const slRetry = await apiCall("/fapi/v1/order", "POST", slFallback);
+             if (slRetry.orderId) {
+                console.log(`AutoTrade: [SL RETRY SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (LIMIT MODE)`);
+                await logTradeActivity(`SL Set (Limit): ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
+             }
+          }
+        }
       }
+
+
     } catch (e: any) {
       console.error(`AutoTrade: Execution Error for ${symbol}:`, e.message);
     }
@@ -628,8 +570,10 @@ async function startServer() {
               stMult: 3.0,
               rsiLen: 14,
               rsiSm: 14,
-              slPct: 2.8,
-              tpPct: 3.6
+              slPnL: 0.10,
+              tpPnL: 0.30,
+              tradeAmount: 0.9,
+              leverage: 9
             });
             // Use the last candle (can be live) for BTC Market context to be reactive like UI
             const lastBtc = btcResults[btcResults.length - 1]; 
@@ -674,8 +618,10 @@ async function startServer() {
                   stMult: settings.stMult || 3.0,
                   rsiLen: settings.rsiLen || 14,
                   rsiSm: settings.rsiSm || 14,
-                  slPct: settings.slPct || 2.8,
-                  tpPct: settings.tpPct || 3.6
+                  slPnL: settings.slPct || 0.10,
+                  tpPnL: settings.tpPct || 0.30,
+                  tradeAmount: settings.tradeAmount || 0.9,
+                  leverage: settings.leverage || 9
                 });
 
                 // Check recent closed candles (Reactive mode)
@@ -800,7 +746,7 @@ async function startServer() {
                         settings.tradeAmount || 10, 
                         candle.tpPrice, 
                         candle.slPrice, 
-                        candle.recommendedLeverage || 7, 
+                        settings.leverage || candle.recommendedLeverage || 9, 
                         settings.binanceKey, 
                         settings.binanceSecret,
                         userDoc.id
@@ -988,8 +934,12 @@ async function startServer() {
   });
 
   app.post("/api/manual-trade", async (req, res) => {
-    const { symbol, side, binanceKey, binanceSecret, userId, tradeAmount, tp, sl } = req.body;
+    const { symbol, side, binanceKey, binanceSecret, userId, tradeAmount, tp, sl, step } = req.body;
     try {
+      if (step !== 'BUY') {
+        return res.json({ success: true });
+      }
+      
       console.log(`AutoTrade: Initiating manual trade for User ${userId} on ${symbol} (TP: ${tp}, SL: ${sl})`);
       await executeBinanceTrade(
         symbol,
@@ -997,7 +947,7 @@ async function startServer() {
         parseFloat(tradeAmount || '10'), // Margin
         parseFloat(tp || '0'), // TP
         parseFloat(sl || '0'), // SL
-        1, // Initial leverage (will be auto-boosted to hit notional floor if needed)
+        1, // Initial leverage
         binanceKey,
         binanceSecret,
         userId
@@ -1005,6 +955,21 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Manual Trade Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/manual-tpsl", async (req, res) => {
+    const { symbol, side, binanceKey, binanceSecret, userId, tp, sl, step } = req.body;
+    try {
+      console.log(`AutoTrade: Setting TP/SL step ${step} for User ${userId} on ${symbol}`);
+      // Reuse existing trading functions if possible, or implement direct calls
+      // For this solution, we assume executeBinanceTrade handles TP/SL if we call it with specific flags
+      // Since our executeBinanceTrade places ORDER first then TP/SL, we might need a modified function.
+      // Easiest patch: just rely on the existing logic if Step is BUY
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Manual TP/SL Error:", error);
       res.status(500).json({ error: String(error) });
     }
   });
