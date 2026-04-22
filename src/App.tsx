@@ -45,7 +45,11 @@ import {
   Globe,
   Activity,
   Eye,
-  EyeOff
+  EyeOff,
+  Sparkles,
+  MessageSquare,
+  X,
+  Bot
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -77,6 +81,8 @@ import {
   limit
 } from 'firebase/firestore';
 import { LogIn, LogOut, User as UserIcon } from 'lucide-react';
+
+import { generateText } from './services/geminiService';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT'];
 
@@ -142,6 +148,14 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [serverIp, setServerIp] = useState<string>('Loading...');
   const [tradedIds, setTradedIds] = useState<Set<string>>(new Set());
+
+  // AI State
+  const [aiAnalysis, setAiAnalysis] = useState<Record<string, string>>({});
+  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [showAiAssistant, setShowAiAssistant] = useState(false);
+  const [aiChatHistory, setAiChatHistory] = useState<{role: 'user' | 'assistant', content: string}[]>([]);
+  const [aiInput, setAiInput] = useState('');
+  const [aiChatLoading, setAiChatLoading] = useState(false);
 
   // Fetch Server IP
   useEffect(() => {
@@ -321,16 +335,13 @@ export default function App() {
     }
   };
 
-  const [tradeProgress, setTradeProgress] = useState<Record<string, 'IDLE' | 'BUY_PLACED' | 'TP_PLACED' | 'SL_PLACED'>>({});
-
-  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL', signalId?: string, tp?: number, sl?: number, step: 'BUY' | 'TP' | 'SL' = 'BUY') => {
+  const triggerManualTrade = async (symbol: string, side: 'BUY' | 'SELL', signalId?: string) => {
     if (!user || !binanceKey || !binanceSecret) {
       alert("Please ensure you are logged in and have Binance API keys configured.");
       return;
     }
     try {
-      const endpoint = step === 'BUY' ? '/api/manual-trade' : '/api/manual-tpsl'; // Assuming separate endpoint for TP/SL
-      const response = await fetch(endpoint, {
+      const response = await fetch('/api/manual-trade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -340,30 +351,22 @@ export default function App() {
           binanceSecret,
           userId: user.uid,
           tradeAmount: tradeAmount,
-          tp: tp || 0,
-          sl: sl || 0,
-          step // Pass the current step
+          leverage: leverage
         })
       });
       if (response.ok) {
         if (signalId) {
-          if (step === 'SL') {
-            setTradedIds(prev => new Set(prev).add(signalId));
-            setTradeProgress(prev => ({...prev, [signalId]: 'IDLE'}));
-          } else {
-            const nextStep = step === 'BUY' ? 'TP_PLACED' : 'SL_PLACED';
-            setTradeProgress(prev => ({...prev, [signalId]: nextStep}));
-          }
+          setTradedIds(prev => new Set(prev).add(signalId));
         }
         setNotifications(prev => [{
           id: Date.now(),
           symbol,
           type: 'SUCCESS',
-          message: `Step ${step} executed successfully!`
+          message: `Market ${side} order executed successfully!`
         }, ...prev].slice(0, 5));
       } else {
         const errorData = await response.json();
-        alert(`Manual trade failed at ${step}: ${errorData.error}`);
+        alert(`Manual trade failed: ${errorData.error}`);
       }
     } catch (e) {
       alert(`Manual trade error: ${e}`);
@@ -449,6 +452,42 @@ export default function App() {
     }
   };
 
+  const analyzeSignalWithAI = async (symbol: string, type: string, price: number) => {
+    const id = `${symbol}-${type}`;
+    setAnalyzingId(id);
+    try {
+      const prompt = `As a professional crypto trading analyst, provide a brief (2 sentences) technical rationale for a ${type} signal on ${symbol} at $${price}. Only provide technical analysis, no financial advice disclaimer. Focus on Entry only as exit targets are managed manually.`;
+      const analysis = await generateText(prompt);
+      setAiAnalysis(prev => ({ ...prev, [id]: analysis || 'Analysis unavailable.' }));
+    } catch (e) {
+      console.error("AI Analysis failed:", e);
+      setAiAnalysis(prev => ({ ...prev, [id]: 'Analysis failed. Check your API key.' }));
+    } finally {
+      setAnalyzingId(null);
+    }
+  };
+
+  const handleAiChat = async () => {
+    if (!aiInput.trim()) return;
+    const userMsg = aiInput;
+    setAiInput('');
+    setAiChatHistory(prev => [...prev, { role: 'user', content: userMsg }]);
+    setAiChatLoading(true);
+    try {
+      const prompt = `You are a professional crypto trading assistant for the "24/7 Cloud Scanner". 
+      Current Market Context: BTC is ${btcTrend?.trend || 'Syncing'}. 
+      You help traders understand market dynamics, technical indicators, and how to use this bot.
+      User Question: ${userMsg}
+      Keep your answer concise and helpful.`;
+      const response = await generateText(prompt);
+      setAiChatHistory(prev => [...prev, { role: 'assistant', content: response || "I'm sorry, I couldn't process that." }]);
+    } catch (e) {
+      setAiChatHistory(prev => [...prev, { role: 'assistant', content: "Error: Failed to connect to Gemini AI. Ensure YOUR_GEMINI_API_KEY is correctly set in your secrets." }]);
+    } finally {
+      setAiChatLoading(false);
+    }
+  };
+
   // Check for alerts every 10 seconds
   useEffect(() => {
     const interval = setInterval(() => {
@@ -483,8 +522,6 @@ export default function App() {
                             `Timeframe: <code>${timeframe}</code>\n` +
                             `BTCUSDT Trend: <code>${btcTrendText}</code>\n` +
                             `Symbol Trend: <code>${alert.trend || 'N/A'} ${alert.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
-                            `Take Profit: <code>${alert.tp ? Number(alert.tp).toFixed(4) : '---'}</code>\n` +
-                            `Stop Loss: <code>${alert.sl ? Number(alert.sl).toFixed(4) : '---'}</code>\n` +
                             `Recommended Leverage: <code>${alert.leverage || '9'}x</code>\n\n` +
                             `Time: <code>${newNotification.time}</code>\n` +
                             `Message: AI Signal Confirmed ✅`;
@@ -1055,8 +1092,7 @@ export default function App() {
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Market Price</th>
-                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">Take Profit</th>
-                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-rose-500">Stop Loss</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">AI Rationale</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Action</th>
                           </tr>
@@ -1064,14 +1100,14 @@ export default function App() {
                         <tbody className="divide-y divide-zinc-800/50">
                           {scanResults.length === 0 && !scanning && (
                             <tr>
-                              <td colSpan={7} className="p-12 text-center text-zinc-500">
+                              <td colSpan={6} className="p-12 text-center text-zinc-500">
                                 No signals found. Click "Start Full Scan" to analyze the market.
                               </td>
                             </tr>
                           )}
                           {scanning && scanResults.length === 0 && (
                             <tr>
-                              <td colSpan={7} className="p-12 text-center">
+                              <td colSpan={6} className="p-12 text-center">
                                 <div className="flex flex-col items-center gap-4">
                                   <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
                                   <div className="space-y-1">
@@ -1116,8 +1152,24 @@ export default function App() {
                                   </Badge>
                                 </td>
                                 <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
-                                <td className="p-4 font-bold text-emerald-400 font-mono">${res.tpPrice ? res.tpPrice.toFixed(4) : '---'}</td>
-                                <td className="p-4 font-bold text-rose-400 font-mono">${res.slPrice ? res.slPrice.toFixed(4) : '---'}</td>
+                                <td className="p-4">
+                                  <div className="max-w-[200px]">
+                                    {aiAnalysis[`${res.symbol}-${res.type}`] ? (
+                                      <p className="text-[10px] text-zinc-400 leading-tight italic line-clamp-2">
+                                        {aiAnalysis[`${res.symbol}-${res.type}`]}
+                                      </p>
+                                    ) : (
+                                      <button 
+                                        onClick={() => analyzeSignalWithAI(res.symbol, res.type, res.price)}
+                                        disabled={analyzingId === `${res.symbol}-${res.type}`}
+                                        className="flex items-center gap-1.5 text-[9px] font-bold text-orange-500/60 hover:text-orange-500 transition-colors uppercase tracking-wider"
+                                      >
+                                        <Sparkles className={cn("w-3 h-3", analyzingId === `${res.symbol}-${res.type}` && "animate-spin")} />
+                                        {analyzingId === `${res.symbol}-${res.type}` ? 'Analyzing...' : 'AI Perspective'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
                                 <td className="p-4 text-xs text-zinc-500 font-mono">
                                   {new Date(res.time).toLocaleTimeString('en-US', {
                                     timeZone: 'Asia/Colombo',
@@ -1136,20 +1188,15 @@ export default function App() {
                                   ) : (
                                     <Button 
                                       size="sm"
-                                      onClick={() => {
-                                        const currentProgress = tradeProgress[res.id] || 'IDLE';
-                                        const nextStep = currentProgress === 'IDLE' ? 'BUY' : (currentProgress === 'BUY_PLACED' ? 'TP' : 'SL');
-                                        triggerManualTrade(res.symbol, res.type, res.id, res.tpPrice, res.slPrice, nextStep);
-                                      }}
+                                      onClick={() => triggerManualTrade(res.symbol, res.type, res.id)}
                                       className={cn(
                                         "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
-                                        tradeProgress[res.id] === 'TP_PLACED' ? "bg-yellow-600 hover:bg-yellow-500" :
-                                        (res.type === 'BUY' 
+                                        res.type === 'BUY' 
                                           ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
-                                          : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20")
+                                          : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
                                       )}
                                     >
-                                      {tradeProgress[res.id] === 'BUY_PLACED' ? 'Set TP' : (tradeProgress[res.id] === 'TP_PLACED' ? 'Set SL' : `Trade ${res.type}`)}
+                                      Run {res.type}
                                     </Button>
                                   )}
                                 </td>
@@ -1223,28 +1270,6 @@ export default function App() {
                         type="number" 
                         value={isNaN(rsiSm) ? '' : rsiSm} 
                         onChange={(e) => setRsiSm(parseInt(e.target.value))}
-                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">Stop Loss (PnL $)</label>
-                      <Input 
-                        type="number" 
-                        step="0.01"
-                        placeholder="e.g. 0.10"
-                        value={isNaN(slPnL) ? '' : slPnL} 
-                        onChange={(e) => setSlPnL(parseFloat(e.target.value))}
-                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">Take Profit (PnL $)</label>
-                      <Input 
-                        type="number" 
-                        step="0.01"
-                        placeholder="e.g. 0.30"
-                        value={isNaN(tpPnL) ? '' : tpPnL} 
-                        onChange={(e) => setTpPnL(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
@@ -1717,6 +1742,108 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* Floating AI Assistant */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
+        <AnimatePresence>
+          {showAiAssistant && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className="w-80 sm:w-96 bg-zinc-950 border border-orange-500/30 rounded-2xl shadow-[0_0_50px_-12px_rgba(249,115,22,0.3)] overflow-hidden flex flex-col h-[500px]"
+            >
+              <div className="p-4 bg-orange-500/10 border-b border-orange-500/20 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-orange-500 rounded-lg">
+                    <Bot className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white tracking-tight">AI Trading Assistant</h3>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                      <span className="text-[10px] text-zinc-400 uppercase font-black">Connected</span>
+                    </div>
+                  </div>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  onClick={() => setShowAiAssistant(false)}
+                  className="h-8 w-8 text-zinc-500 hover:text-white hover:bg-white/5"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-zinc-800">
+                {aiChatHistory.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full text-center space-y-3 opacity-40">
+                    <MessageSquare className="w-8 h-8 text-zinc-500" />
+                    <p className="text-xs text-zinc-400 px-8">Ask me about current market trends, signals, or trading strategy.</p>
+                  </div>
+                )}
+                {aiChatHistory.map((chat, i) => (
+                  <div key={i} className={cn(
+                    "flex flex-col max-w-[85%]",
+                    chat.role === 'user' ? "ml-auto items-end" : "mr-auto items-start"
+                  )}>
+                    <div className={cn(
+                      "p-3 rounded-2xl text-[12px] leading-relaxed",
+                      chat.role === 'user' 
+                        ? "bg-orange-500 text-white rounded-tr-none" 
+                        : "bg-zinc-900 border border-white/5 text-zinc-300 rounded-tl-none"
+                    )}>
+                      {chat.content}
+                    </div>
+                  </div>
+                ))}
+                {aiChatLoading && (
+                  <div className="flex items-center gap-2 text-zinc-500">
+                    <div className="flex gap-1">
+                      <div className="w-1 h-1 bg-orange-500 rounded-full animate-bounce" />
+                      <div className="w-1 h-1 bg-orange-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                      <div className="w-1 h-1 bg-orange-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Bot is thinking</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 bg-zinc-900/50 border-t border-white/5">
+                <form 
+                  onSubmit={(e) => { e.preventDefault(); handleAiChat(); }}
+                  className="relative"
+                >
+                  <Input 
+                    placeholder="Ask about the market..."
+                    value={aiInput}
+                    onChange={(e) => setAiInput(e.target.value)}
+                    className="bg-black/60 border-orange-500/20 pr-10 text-xs h-10 placeholder:text-zinc-600 focus:border-orange-500/50"
+                  />
+                  <button 
+                    type="submit"
+                    disabled={aiChatLoading}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-orange-500 hover:bg-orange-500/10 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={() => setShowAiAssistant(!showAiAssistant)}
+          className="w-14 h-14 bg-orange-500 rounded-full flex items-center justify-center shadow-[0_0_30px_-5px_rgba(249,115,22,0.5)] cursor-pointer group relative"
+        >
+          {showAiAssistant ? <X className="text-white w-6 h-6" /> : <Bot className="text-white w-6 h-6" />}
+          <div className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-zinc-950" />
+        </motion.button>
+      </div>
     </div>
   );
 }
