@@ -160,7 +160,7 @@ async function startServer() {
           const s = settingsSnap.data();
           tpPctFallback = s.tpPct || 36.0;
           slPctFallback = s.slPct || 28.0;
-          if (leverage === 1) finalLeverage = s.stMult || 7; // Use multiplier as default leverage if not provided
+          if (leverage === 1) finalLeverage = s.stMult || 9; // Use multiplier as default leverage if not provided
         }
       }
 
