@@ -1511,6 +1511,22 @@ export default function App() {
                       <div className="flex items-center gap-2 bg-black/40 px-2 py-1 rounded text-[10px] font-mono border border-white/5 group relative w-full sm:w-auto">
                         <span className="text-zinc-500">TRUSTED IP:</span>
                         <span className="text-orange-400 font-bold flex-1 sm:flex-none">{serverIp}</span>
+                        <button
+                          onClick={async () => {
+                            setServerIp('Loading...');
+                            try {
+                              const r = await fetch('/api/server-ip');
+                              const d = await r.json();
+                              setServerIp(d.ip || 'Unknown');
+                            } catch (e) {
+                              setServerIp('Failed');
+                            }
+                          }}
+                          className="ml-2 p-1 hover:bg-white/10 rounded transition-colors"
+                          title="Refresh IP"
+                        >
+                          <RefreshCw className="w-3 h-3 text-zinc-400" />
+                        </button>
                         <button 
                           onClick={() => {
                             navigator.clipboard.writeText(serverIp);
