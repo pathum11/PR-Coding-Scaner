@@ -335,15 +335,13 @@ async function startServer() {
         let tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
         
         // Multi-stage retry logic if any "Algo Order", "Parameter", or "not supported" errors occur
-        if (!tpOrder.orderId && tpOrder.msg && (tpOrder.msg.includes("Algo Order API") || tpOrder.msg.includes("Parameter") || tpOrder.msg.includes("not supported"))) {
+        if (!tpOrder.orderId && tpOrder.msg && (tpOrder.msg.includes("Algo Order") || tpOrder.msg.includes("Parameter") || tpOrder.msg.includes("not supported"))) {
           console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 1: Alternative workingType)...`);
-          if (tpParams.workingType === "CONTRACT_PRICE") {
-            tpParams.workingType = "MARK_PRICE";
-            tpOrder = await apiCall("/fapi/v1/order", "POST", tpParams);
-          }
+          const tpStage1Params = { ...tpParams, workingType: tpParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" };
+          tpOrder = await apiCall("/fapi/v1/order", "POST", tpStage1Params);
           
           if (!tpOrder.orderId) {
-            console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 2: LIMIT fallback)...`);
+            console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 2: Standard REDUCE_ONLY fallback)...`);
             const fallbackTpParams: any = {
               symbol,
               side: tpSide,
@@ -351,9 +349,9 @@ async function startServer() {
               type: "LIMIT",
               price: formatPrice(finalTp),
               timeInForce: "GTC",
-              quantity: qty
+              quantity: qty,
+              reduceOnly: "true"
             };
-            if (!isHedgeMode) fallbackTpParams.reduceOnly = "true";
             tpOrder = await apiCall("/fapi/v1/order", "POST", fallbackTpParams);
           }
         }
@@ -393,14 +391,14 @@ async function startServer() {
 
         let slOrder = await apiCall("/fapi/v1/order", "POST", slParams);
 
-        if (!slOrder.orderId && slOrder.msg && (slOrder.msg.includes("Algo Order API") || slOrder.msg.includes("invalid") || slOrder.msg.includes("Parameter") || slOrder.msg.includes("not supported"))) {
+        if (!slOrder.orderId && slOrder.msg && (slOrder.msg.includes("Algo Order") || slOrder.msg.includes("invalid") || slOrder.msg.includes("Parameter") || slOrder.msg.includes("not supported"))) {
            console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 1: Alternate workingType)...`);
            const stage1Params = { ...slParams, workingType: slParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" };
            slOrder = await apiCall("/fapi/v1/order", "POST", stage1Params);
 
            if (!slOrder.orderId) {
               const altType = slParams.type === "STOP_MARKET" ? "STOP" : "STOP_MARKET";
-              console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 2: Alternate Type ${altType})...`);
+              console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 2: Alternate Type ${altType} + REDUCE_ONLY)...`);
               const fallbackSlParams: any = {
                  symbol,
                  side: tpSide,
@@ -408,29 +406,21 @@ async function startServer() {
                  type: altType,
                  stopPrice: formatPrice(finalSl),
                  workingType: "CONTRACT_PRICE",
-                 quantity: qty
+                 quantity: qty,
+                 reduceOnly: "true"
               };
               if (altType === "STOP") {
                  fallbackSlParams.price = formatPrice(finalSl);
                  fallbackSlParams.timeInForce = "GTC";
               }
-              if (!isHedgeMode) fallbackSlParams.reduceOnly = "true";
               slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
 
               if (!slOrder.orderId) {
-                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 3: MARK_PRICE fallback)...`);
+                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 3: MARK_PRICE + REDUCE_ONLY fallback)...`);
                 fallbackSlParams.workingType = "MARK_PRICE";
                 slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
               }
            }
-        }
-        
-        if (slOrder.orderId) {
-          console.log(`AutoTrade: [SL SET SUCCESS] ${symbol} @ ${formatPrice(finalSl)} (Mode: ${slOrder.type})`);
-          await logTradeActivity(`SL Set: ${symbol} @ ${formatPrice(finalSl)}`, 'INFO');
-        } else {
-          console.error(`AutoTrade: [SL FAILED] ${symbol}:`, slOrder.msg || JSON.stringify(slOrder));
-          await logTradeActivity(`Failed to set SL for ${symbol}: ${slOrder.msg || 'Unknown Error'}`, 'ERROR');
         }
         
         if (slOrder.orderId) {
