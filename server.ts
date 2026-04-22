@@ -341,7 +341,7 @@ async function startServer() {
           tpOrder = await apiCall("/fapi/v1/order", "POST", tpStage1Params);
           
           if (!tpOrder.orderId) {
-            console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 2: Standard REDUCE_ONLY fallback)...`);
+            console.log(`AutoTrade: Retrying TP for ${symbol} (Stage 2: Standard fallback)...`);
             const fallbackTpParams: any = {
               symbol,
               side: tpSide,
@@ -349,9 +349,9 @@ async function startServer() {
               type: "LIMIT",
               price: formatPrice(finalTp),
               timeInForce: "GTC",
-              quantity: qty,
-              reduceOnly: "true"
+              quantity: qty
             };
+            if (!isHedgeMode) fallbackTpParams.reduceOnly = "true";
             tpOrder = await apiCall("/fapi/v1/order", "POST", fallbackTpParams);
           }
         }
@@ -385,40 +385,67 @@ async function startServer() {
           slParams.price = formatPrice(finalSl);
           slParams.timeInForce = "GTC";
         } else {
-          slParams.type = "STOP_MARKET";
-          slParams.stopPrice = formatPrice(finalSl);
+          // Comprehensive Fallback: Use LIMIT if neither STOP type is supported
+          slParams.type = "LIMIT";
+          slParams.price = formatPrice(finalSl);
+          slParams.timeInForce = "GTC";
+          slParams.quantity = qty;
+          if (!isHedgeMode) slParams.reduceOnly = "true";
+          delete slParams.closePosition;
+          delete slParams.workingType;
         }
 
         let slOrder = await apiCall("/fapi/v1/order", "POST", slParams);
 
         if (!slOrder.orderId && slOrder.msg && (slOrder.msg.includes("Algo Order") || slOrder.msg.includes("invalid") || slOrder.msg.includes("Parameter") || slOrder.msg.includes("not supported"))) {
-           console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 1: Alternate workingType)...`);
-           const stage1Params = { ...slParams, workingType: slParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" };
-           slOrder = await apiCall("/fapi/v1/order", "POST", stage1Params);
+           console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 1: Alternate Parameters)...`);
+           
+           // If we tried CLOSE_POSITION first, try with QUANTITY + REDUCE_ONLY
+           if (slParams.closePosition === "true") {
+              const stage1Params = { 
+                ...slParams, 
+                quantity: qty,
+                workingType: slParams.workingType === "CONTRACT_PRICE" ? "MARK_PRICE" : "CONTRACT_PRICE" 
+              };
+              delete stage1Params.closePosition;
+              if (!isHedgeMode) stage1Params.reduceOnly = "true";
+              slOrder = await apiCall("/fapi/v1/order", "POST", stage1Params);
+           }
 
            if (!slOrder.orderId) {
-              const altType = slParams.type === "STOP_MARKET" ? "STOP" : "STOP_MARKET";
-              console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 2: Alternate Type ${altType} + REDUCE_ONLY)...`);
-              const fallbackSlParams: any = {
-                 symbol,
-                 side: tpSide,
-                 positionSide,
-                 type: altType,
-                 stopPrice: formatPrice(finalSl),
-                 workingType: "CONTRACT_PRICE",
-                 quantity: qty,
-                 reduceOnly: "true"
-              };
-              if (altType === "STOP") {
-                 fallbackSlParams.price = formatPrice(finalSl);
-                 fallbackSlParams.timeInForce = "GTC";
+              const altType = slParams.type === "STOP_MARKET" ? "STOP" : (slParams.type === "STOP" ? "STOP_MARKET" : "LIMIT");
+              if (altType !== "LIMIT") {
+                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 2: Alternate Type ${altType})...`);
+                const fallbackSlParams: any = {
+                   symbol,
+                   side: tpSide,
+                   positionSide,
+                   type: altType,
+                   stopPrice: formatPrice(finalSl),
+                   workingType: "CONTRACT_PRICE",
+                   quantity: qty
+                };
+                if (altType === "STOP") {
+                   fallbackSlParams.price = formatPrice(finalSl);
+                   fallbackSlParams.timeInForce = "GTC";
+                }
+                if (!isHedgeMode) fallbackSlParams.reduceOnly = "true";
+                slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
               }
-              slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
 
               if (!slOrder.orderId) {
-                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 3: MARK_PRICE + REDUCE_ONLY fallback)...`);
-                fallbackSlParams.workingType = "MARK_PRICE";
-                slOrder = await apiCall("/fapi/v1/order", "POST", fallbackSlParams);
+                console.log(`AutoTrade: Retrying SL for ${symbol} (Stage 3: MARK_PRICE / LIMIT fallback)...`);
+                const finalFallback: any = {
+                  symbol,
+                  side: tpSide,
+                  positionSide,
+                  type: "LIMIT",
+                  price: formatPrice(finalSl),
+                  timeInForce: "GTC",
+                  quantity: qty
+                };
+                if (!isHedgeMode) finalFallback.reduceOnly = "true";
+                slOrder = await apiCall("/fapi/v1/order", "POST", finalFallback);
               }
            }
         }
