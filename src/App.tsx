@@ -34,6 +34,7 @@ import {
   ListFilter,
   Target,
   Copy,
+  ShieldAlert,
   Check,
   Bell,
   BellRing,
@@ -842,9 +843,9 @@ export default function App() {
   const latest = processedData[processedData.length - 1];
 
   return (
-    <div className="min-h-screen bg-[#0c0601] text-zinc-100 font-sans selection:bg-orange-500/30 relative overflow-x-hidden">
+    <div className="min-h-screen bg-[#0c0601] text-zinc-100 font-sans selection:bg-orange-500/30 relative overflow-hidden w-full">
       {/* Background Decorative Elements */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-orange-500/10 rounded-full blur-[120px]" />
         <div className="absolute top-[20%] -right-[10%] w-[30%] h-[30%] bg-amber-500/5 rounded-full blur-[120px]" />
         <div className="absolute -bottom-[10%] left-[20%] w-[40%] h-[40%] bg-orange-600/5 rounded-full blur-[120px]" />
@@ -852,17 +853,17 @@ export default function App() {
 
       {/* Header */}
       <header className="border-b border-white/5 bg-black/40 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 py-3 sm:h-16 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-0">
+          <div className="flex items-center gap-3 self-start sm:self-center">
             <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(249,115,22,0.4)]">
               <Zap className="w-5 h-5 text-black fill-current" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-orange-400 bg-clip-text text-transparent">
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight bg-gradient-to-r from-white to-orange-400 bg-clip-text text-transparent">
               CryptoPulse <span className="text-orange-500 font-mono text-sm ml-1">v1.0</span>
             </h1>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between w-full sm:w-auto gap-4">
             {authLoading ? (
               <div className="w-8 h-8 rounded-full bg-white/5 animate-pulse" />
             ) : user ? (
@@ -905,8 +906,8 @@ export default function App() {
 
       {/* BTC Trend Bar */}
       <div className="bg-orange-500/5 border-b border-orange-500/10 py-2">
-        <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
-          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
             <div className="flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-orange-500/20 whitespace-nowrap">
               <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tighter">BTC Market Context</span>
               {btcTrendLoading ? (
@@ -973,25 +974,25 @@ export default function App() {
           </motion.div>
         )}
         <div className="space-y-6">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-2">
             <div>
-              <h2 className="text-2xl font-black text-white flex items-center gap-2 tracking-tighter uppercase italic">
+              <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2 tracking-tighter uppercase italic">
                  <LayoutDashboard className="w-6 h-6 text-orange-500" /> AI Dashboard <span className="text-orange-500">Live</span>
               </h2>
               <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">V9 Sync Analysis Engine</p>
             </div>
             
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 w-full sm:w-auto">
               <Button 
                 onClick={() => triggerManualTrade('UMAUSDT', 'BUY')}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white gap-2 shadow-[0_0_15px_rgba(5,150,105,0.3)] h-11 px-4 font-black uppercase text-xs transition-all active:scale-95"
+                className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white gap-2 shadow-[0_0_15px_rgba(5,150,105,0.3)] h-11 px-4 font-black uppercase text-[10px] sm:text-xs transition-all active:scale-95"
               >
                 <Zap className="w-4 h-4" /> TEST BUY UMA
               </Button>
               <Button 
                 onClick={startScan} 
                 disabled={scanning}
-                className="bg-orange-600 hover:bg-orange-500 text-white gap-2 shadow-[0_0_15px_rgba(234,88,12,0.3)] h-11 px-6 font-black uppercase text-xs transition-all active:scale-95"
+                className="flex-1 sm:flex-none bg-orange-600 hover:bg-orange-500 text-white gap-2 shadow-[0_0_15px_rgba(234,88,12,0.3)] h-11 px-6 font-black uppercase text-[10px] sm:text-xs transition-all active:scale-95"
               >
                 {scanning ? (
                   <>
@@ -1026,112 +1027,114 @@ export default function App() {
               </Badge>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-zinc-800 bg-black/20">
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Market Price</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">Take Profit</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-rose-500">Stop Loss</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
-                      <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/50">
-                    {scanResults.length === 0 && !scanning && (
-                      <tr>
-                        <td colSpan={7} className="p-12 text-center text-zinc-500">
-                          No signals found. Click "Start Full Scan" to analyze the market.
-                        </td>
-                      </tr>
-                    )}
-                    {scanning && scanResults.length === 0 && (
-                      <tr>
-                        <td colSpan={7} className="p-12 text-center">
-                          <div className="flex flex-col items-center gap-4">
-                            <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
-                            <div className="space-y-1">
-                              <p className="text-zinc-100 font-medium">Scanning {totalSymbols} Binance Futures... {scanProgress}%</p>
-                              <p className="text-zinc-500 text-xs font-mono">Analyzing {currentScanning}</p>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    <AnimatePresence mode="popLayout">
-                      {scanResults.map((res) => (
-                        <motion.tr 
-                          key={res.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95 }}
-                          className="hover:bg-orange-500/5 transition-colors group"
-                        >
-                          <td className="p-4">
-                            <div 
-                              className="flex items-center gap-2 cursor-pointer group/copy hover:bg-orange-500/10 p-1 -ml-1 rounded transition-colors w-fit"
-                              onClick={() => copyToClipboard(res.symbol)}
-                              title="Click to copy symbol"
-                            >
-                              <span className="font-bold text-zinc-100">{res.symbol}</span>
-                              <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
-                                {copiedSymbol === res.symbol ? (
-                                  <Check className="w-3 h-3 text-emerald-500" />
-                                ) : (
-                                  <Copy className="w-3 h-3 text-zinc-400 group-hover/copy:text-orange-500" />
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <Badge className={cn(
-                              "border-none",
-                              res.type === 'BUY' ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
-                            )}>
-                              {res.type}
-                            </Badge>
-                          </td>
-                          <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
-                          <td className="p-4 font-bold text-emerald-400 font-mono">${res.tpPrice ? res.tpPrice.toFixed(4) : '---'}</td>
-                          <td className="p-4 font-bold text-rose-400 font-mono">${res.slPrice ? res.slPrice.toFixed(4) : '---'}</td>
-                           <td className="p-4 text-xs text-zinc-500 font-mono">
-                             {new Date(res.time).toLocaleTimeString('en-US', {
-                               timeZone: 'Asia/Colombo',
-                               hour: '2-digit',
-                               minute: '2-digit',
-                               hour12: false
-                             })} <span className="text-[10px] opacity-70">IST</span>
-                           </td>
-                           <td className="p-4 text-right">
-                             {tradedIds.has(res.id) ? (
-                               <div className="flex justify-end pr-4">
-                                 <div className="w-7 h-7 bg-emerald-500/20 rounded-full flex items-center justify-center border border-emerald-500/50">
-                                   <Check className="w-4 h-4 text-emerald-500" />
-                                 </div>
-                               </div>
-                             ) : (
-                               <Button 
-                                 size="sm"
-                                 onClick={() => triggerManualTrade(res.symbol, res.type, res.id, res.tpPrice, res.slPrice)}
-                                 className={cn(
-                                   "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
-                                   res.type === 'BUY' 
-                                     ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
-                                     : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
-                                 )}
-                               >
-                                 Trade {res.type}
-                               </Button>
-                             )}
-                           </td>
-                        </motion.tr>
-                      ))}
-                    </AnimatePresence>
-                  </tbody>
-                </table>
-              </div>
+                  <div className="overflow-x-auto w-full">
+                    <div className="min-w-[800px]">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-zinc-800 bg-black/20">
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Market Price</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-emerald-500">Take Profit</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase text-rose-500">Stop Loss</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800/50">
+                          {scanResults.length === 0 && !scanning && (
+                            <tr>
+                              <td colSpan={7} className="p-12 text-center text-zinc-500">
+                                No signals found. Click "Start Full Scan" to analyze the market.
+                              </td>
+                            </tr>
+                          )}
+                          {scanning && scanResults.length === 0 && (
+                            <tr>
+                              <td colSpan={7} className="p-12 text-center">
+                                <div className="flex flex-col items-center gap-4">
+                                  <RefreshCw className="w-8 h-8 text-orange-500 animate-spin" />
+                                  <div className="space-y-1">
+                                    <p className="text-zinc-100 font-medium">Scanning {totalSymbols} Binance Futures... {scanProgress}%</p>
+                                    <p className="text-zinc-500 text-xs font-mono">Analyzing {currentScanning}</p>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          <AnimatePresence mode="popLayout">
+                            {scanResults.map((res) => (
+                              <motion.tr 
+                                key={res.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="hover:bg-orange-500/5 transition-colors group"
+                              >
+                                <td className="p-4">
+                                  <div 
+                                    className="flex items-center gap-2 cursor-pointer group/copy hover:bg-orange-500/10 p-1 -ml-1 rounded transition-colors w-fit"
+                                    onClick={() => copyToClipboard(res.symbol)}
+                                    title="Click to copy symbol"
+                                  >
+                                    <span className="font-bold text-zinc-100">{res.symbol}</span>
+                                    <div className="opacity-40 group-hover/copy:opacity-100 transition-opacity">
+                                      {copiedSymbol === res.symbol ? (
+                                        <Check className="w-3 h-3 text-emerald-500" />
+                                      ) : (
+                                        <Copy className="w-3 h-3 text-zinc-400 group-hover/copy:text-orange-500" />
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="p-4">
+                                  <Badge className={cn(
+                                    "border-none",
+                                    res.type === 'BUY' ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                                  )}>
+                                    {res.type}
+                                  </Badge>
+                                </td>
+                                <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
+                                <td className="p-4 font-bold text-emerald-400 font-mono">${res.tpPrice ? res.tpPrice.toFixed(4) : '---'}</td>
+                                <td className="p-4 font-bold text-rose-400 font-mono">${res.slPrice ? res.slPrice.toFixed(4) : '---'}</td>
+                                <td className="p-4 text-xs text-zinc-500 font-mono">
+                                  {new Date(res.time).toLocaleTimeString('en-US', {
+                                    timeZone: 'Asia/Colombo',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: false
+                                  })} <span className="text-[10px] opacity-70">IST</span>
+                                </td>
+                                <td className="p-4 text-right">
+                                  {tradedIds.has(res.id) ? (
+                                    <div className="flex justify-end pr-4">
+                                      <div className="w-7 h-7 bg-emerald-500/20 rounded-full flex items-center justify-center border border-emerald-500/50">
+                                        <Check className="w-4 h-4 text-emerald-500" />
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <Button 
+                                      size="sm"
+                                      onClick={() => triggerManualTrade(res.symbol, res.type, res.id, res.tpPrice, res.slPrice)}
+                                      className={cn(
+                                        "h-7 px-3 text-[10px] font-black uppercase transition-all shadow-lg active:scale-95",
+                                        res.type === 'BUY' 
+                                          ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20" 
+                                          : "bg-rose-600 hover:bg-rose-500 shadow-rose-900/20"
+                                      )}
+                                    >
+                                      Trade {res.type}
+                                    </Button>
+                                  )}
+                                </td>
+                              </motion.tr>
+                            ))}
+                          </AnimatePresence>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -1415,7 +1418,7 @@ export default function App() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-6 space-y-6">
-                  <div className="flex items-center justify-between p-4 bg-orange-500/5 rounded-xl border border-orange-500/10">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-orange-500/5 rounded-xl border border-orange-500/10 gap-4 sm:gap-0">
                     <div className="flex items-center gap-2">
                       <Zap className={cn("w-4 h-4", autoTradeEnabled ? "text-orange-500" : "text-zinc-500")} />
                       <div className="flex flex-col">
@@ -1426,7 +1429,7 @@ export default function App() {
                     <button 
                       onClick={() => setAutoTradeEnabled(!autoTradeEnabled)}
                       className={cn(
-                        "w-10 h-5 rounded-full transition-colors relative",
+                        "w-10 h-5 rounded-full transition-colors relative self-end sm:self-center",
                         autoTradeEnabled ? "bg-orange-500" : "bg-zinc-800"
                       )}
                     >
@@ -1497,23 +1500,70 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="p-4 bg-orange-500/10 rounded-xl border border-orange-500/20">
-                    <div className="flex justify-between items-center mb-2">
+                  <div className="p-4 bg-orange-500/10 rounded-xl border border-orange-500/20 space-y-3">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-2 border-b border-orange-500/10 gap-2 sm:gap-0">
                        <h4 className="text-xs font-bold text-orange-500 uppercase tracking-wider flex items-center gap-2">
-                        <Info className="w-3 h-3" /> Whitelist Required
+                        <ShieldAlert className="w-3 h-3" /> Mandatory Setup
                       </h4>
-                      <div className="flex items-center gap-2 bg-black/40 px-2 py-0.5 rounded text-[10px] font-mono border border-white/5">
-                        <span className="text-zinc-500">SERVER IP:</span>
-                        <span className="text-zinc-100">{serverIp}</span>
+                      <div className="flex items-center gap-2 bg-black/40 px-2 py-1 rounded text-[10px] font-mono border border-white/5 group relative w-full sm:w-auto">
+                        <span className="text-zinc-500">TRUSTED IP:</span>
+                        <span className="text-orange-400 font-bold flex-1 sm:flex-none">{serverIp}</span>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(serverIp);
+                            alert("IP Copied to clipboard!");
+                          }}
+                          className="ml-2 p-1 hover:bg-white/10 rounded transition-colors"
+                          title="Copy IP"
+                        >
+                          <Copy className="w-3 h-3 text-zinc-400" />
+                        </button>
                       </div>
                     </div>
-                    <ul className="text-[10px] text-zinc-300 space-y-1 list-disc pl-4 leading-relaxed">
-                      <li>Whitelist IP: <code className="bg-black/60 px-1 py-0.5 rounded text-orange-400 font-mono text-[10px]">{serverIp}</code> in Binance Settings.</li>
-                      <li>Ensure API keys have <span className="text-orange-400 font-bold">"Enable Futures"</span> checked.</li>
-                      <li>Global Binance accounts only (Binance US is not supported).</li>
-                      <li>Min Trade Value is $5. If margin is $0.90, leverage will be adj. to 6x+ automatically.</li>
-                      <li>Strategy uses Market Orders for entry, TP, and SL.</li>
-                    </ul>
+                    
+                    <div className="space-y-3">
+                      <div className="flex gap-3">
+                        <div className="w-5 h-5 rounded-full bg-orange-500/20 border border-orange-500/50 flex items-center justify-center shrink-0 mt-0.5">
+                          <span className="text-[10px] font-bold text-orange-500">1</span>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-bold text-zinc-100">Whitelist Server IP</p>
+                          <p className="text-[10px] text-zinc-400 leading-relaxed">
+                            Log in to Binance API Management. Select "Restrict access to trusted IPs only" and paste <code className="bg-black/40 px-1 rounded text-orange-400">{serverIp}</code>.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <div className="w-5 h-5 rounded-full bg-orange-500/20 border border-orange-500/50 flex items-center justify-center shrink-0 mt-0.5">
+                          <span className="text-[10px] font-bold text-orange-500">2</span>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-bold text-zinc-100">Enable Futures Trading</p>
+                          <p className="text-[10px] text-zinc-400 leading-relaxed">
+                            Check the <span className="text-orange-400 font-bold underline">"Enable Futures"</span> permission checkbox in your Binance API settings.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <div className="w-5 h-5 rounded-full bg-orange-500/20 border border-orange-500/50 flex items-center justify-center shrink-0 mt-0.5">
+                          <span className="text-[10px] font-bold text-orange-500">3</span>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-bold text-zinc-100">Futures Hedge Mode</p>
+                          <p className="text-[10px] text-zinc-400 leading-relaxed">
+                            Open Binance Futures terminal, go to <span className="text-orange-400 font-bold italic">Preferences → Position Mode</span> and select <span className="text-white font-bold">"Hedge Mode"</span>.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-orange-500/10">
+                      <p className="text-[9px] text-zinc-500 italic">
+                        * Binance US accounts are not supported. Only Binance Global (dot com) keys work.
+                      </p>
+                    </div>
                   </div>
 
                   <div className="flex justify-between items-center pt-4 border-t border-white/5">

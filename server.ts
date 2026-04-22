@@ -56,6 +56,31 @@ try {
   console.error("Firebase Initialization Error:", e);
 }
 
+let cachedServerIp: string | null = null;
+let lastIpFetch = 0;
+const IP_CACHE_TTL = 3600000; // 1 hour
+
+async function getServerIp() {
+  if (cachedServerIp && (Date.now() - lastIpFetch < IP_CACHE_TTL)) return cachedServerIp;
+  
+  const providers = ["https://api.ipify.org?format=json", "https://ifconfig.me/all.json"];
+  for (const url of providers) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        const ip = data.ip || data.ip_addr;
+        if (ip) {
+          cachedServerIp = ip;
+          lastIpFetch = Date.now();
+          return ip;
+        }
+      }
+    } catch (e) {}
+  }
+  return "Unknown";
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -111,7 +136,14 @@ async function startServer() {
       return fetch(url, {
         method,
         headers: { 'X-MBX-APIKEY': apiKey }
-      }).then(r => r.json());
+      }).then(async r => {
+        const data = await r.json();
+        if (data.code === -2015) {
+           const sIp = await getServerIp();
+           console.error(`AutoTrade: [SECURITY ERROR] Symbol: ${symbol}, Method: ${method}, Path: ${path}. Msg: ${data.msg}. Ensure IP ${sIp} is whitelisted and 'Enable Futures' is checked.`);
+        }
+        return data;
+      });
     };
 
     try {
@@ -931,25 +963,8 @@ async function startServer() {
 
   app.get("/api/server-ip", async (req, res) => {
     try {
-      // Try multiple services for robustness
-      const providers = [
-        "https://api.ipify.org?format=json",
-        "https://ifconfig.me/all.json"
-      ];
-      
-      for (const url of providers) {
-        try {
-          const response = await fetch(url, { timeout: 5000 } as any);
-          if (response.ok) {
-            const data = await response.json();
-            const ip = data.ip || data.ip_addr;
-            if (ip) return res.json({ ip });
-          }
-        } catch (e) {
-          console.warn(`Server: Failed to fetch IP from ${url}`);
-        }
-      }
-      res.status(500).json({ error: "Failed to fetch server IP from all providers" });
+      const ip = await getServerIp();
+      res.json({ ip });
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch server IP" });
     }
