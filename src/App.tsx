@@ -720,32 +720,44 @@ export default function App() {
             });
 
             const now = Date.now();
-            const lookbackMs = scanLookbackMinutes * 60 * 1000;
-            const lookbackLimit = now - lookbackMs;
+            const timeframeToMs: Record<string, number> = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000 };
+            const tfMs = timeframeToMs[timeframe] || 300000;
+            const signalMaxAgeMs = tfMs * 10;
+            const btcSignalTime = btcTrend?.signalTime || 0;
+            const signalAgeLimit = now - signalMaxAgeMs;
             
-            // Find the most recent signal within the lookback window
-            // Start from j = length - 2 to ensure we only look at CLOSED candles
+            // Find the FIRST signal that occurred after the BTC trend flip
             let foundSignal = null;
-            for (let j = processed.length - 2; j >= 0; j--) {
+            for (let j = 0; j < processed.length - 1; j++) {
               const candle = processed[j];
-              if (candle.time < lookbackLimit) break;
-
-              // FILTER: Market Price < 0.9 USDT
-              if (candle.close >= 0.9) continue;
+              if (candle.time < btcSignalTime) continue;
 
               const isBuy = candle.buySignal;
               const isSell = candle.sellSignal;
               
-              // FILTER: Align with BTC Trend
-              const isBtcBullish = btcTrend?.trend === 'BULLISH';
-              const isBtcBearish = btcTrend?.trend === 'BEARISH';
+              if (isBuy || isSell) {
+                const signalType = isBuy ? 'BUY' : 'SELL';
+                
+                // FILTER: Alignment with BTC
+                const isBtcBullish = btcTrend?.trend === 'BULLISH';
+                const isBtcBearish = btcTrend?.trend === 'BEARISH';
+                const isAligned = (signalType === 'BUY' && isBtcBullish) || (signalType === 'SELL' && isBtcBearish);
+                
+                // FILTER: Market Price < 0.9 USDT
+                const isPriceOk = candle.close < 0.9;
+                
+                // FILTER: Within last 10 candles
+                const isRecent = candle.time >= signalAgeLimit;
 
-              if ((isBuy && isBtcBullish) || (isSell && isBtcBearish)) {
-                foundSignal = {
-                  candle,
-                  type: isBuy ? 'BUY' : 'SELL' as 'BUY' | 'SELL',
-                  source: 'Triple Confirmation'
-                };
+                if (isAligned && isPriceOk && isRecent) {
+                  foundSignal = {
+                    candle,
+                    type: signalType as 'BUY' | 'SELL',
+                    source: 'Triple Confirmation'
+                  };
+                }
+                // Break after finding the FIRST one since BTC change, 
+                // even if it didn't pass the filters (it's the first occurrence)
                 break;
               }
             }
@@ -833,17 +845,52 @@ export default function App() {
 
   useEffect(() => {
     fetchData(symbol, timeframe);
-    fetchBtcTrend('15m');
+    fetchBtcTrend('1h');
     const interval = setInterval(() => {
       fetchData(symbol, timeframe);
-      fetchBtcTrend('15m');
+      fetchBtcTrend('1h');
     }, 60000); // Refresh every minute
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
 
+  // Precise Auto-scan aligned with the clock (every 5 mins: :00, :05, :10...)
+  useEffect(() => {
+    if (!autoScan) return;
+
+    let timer: NodeJS.Timeout;
+    
+    const scheduleNextScan = () => {
+      const now = new Date();
+      // Calculate mins until next :00, :05, :10...
+      let nextMinute = 5 - (now.getMinutes() % 5);
+      // If we are exactly on the mark (e.g. 05:00.000), wait another 5 mins
+      if (nextMinute === 5 && now.getSeconds() === 0 && now.getMilliseconds() === 0) {
+        nextMinute = 5;
+      }
+      
+      const delay = (nextMinute * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
+
+      timer = setTimeout(async () => {
+        if (!scanning && autoScan) {
+          console.log(`Scanner: Executing clock-aligned auto-scan at ${new Date().toLocaleTimeString()}`);
+          // Refresh BTC Trend right before scanning to ensure it's loaded
+          await fetchBtcTrend('1h');
+          startScan();
+        }
+        scheduleNextScan(); // Schedule for the next interval
+      }, delay);
+    };
+
+    scheduleNextScan();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [timeframe, autoScan]); 
+
   const fetchBtcTrend = async (forcedTF?: string) => {
     setBtcTrendLoading(true);
-    const contextTF = forcedTF || '15m';
+    const contextTF = forcedTF || '1h';
     try {
       const response = await fetchWithRetry(`/api/klines?symbol=BTCUSDT&interval=${contextTF}&limit=100`);
       if (response.ok) {
@@ -870,9 +917,19 @@ export default function App() {
         });
         const last = results[results.length - 1];
         if (last) {
+          // Find the exact time the current trend started
+          let btcSignalTime = last.time;
+          for (let i = results.length - 1; i >= 1; i--) {
+            if (results[i].trend !== results[i - 1].trend) {
+              btcSignalTime = results[i].time;
+              break;
+            }
+          }
+          if (btcSignalTime === 0 && results.length > 0) btcSignalTime = results[0].time;
+
           setBtcTrend({
             trend: last.trend,
-            signal: last.buySignal ? 'BUY' : (last.sellSignal ? 'SELL' : undefined)
+            signalTime: btcSignalTime
           });
         }
       }

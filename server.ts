@@ -364,8 +364,8 @@ async function startServer() {
         try {
           let btcRaw: any = null;
           
-          // Check cache first (always use 15m for context)
-          const btcTf = '15m';
+          // Check cache first (always use 1H for context as per Default Setting)
+          const btcTf = '1h';
           const cacheKey = `BTCUSDT-${btcTf}`;
           const cached = cachedBtcKlines.get(cacheKey);
           if (cached && (Date.now() - cached.timestamp < BTC_KLINES_CACHE_TTL)) {
@@ -400,8 +400,20 @@ async function startServer() {
             });
             // Use the last candle (can be live) for BTC Market context to be reactive like UI
             const lastBtc = btcResults[btcResults.length - 1]; 
+            let btcSignalTime = 0;
             if (lastBtc) {
               btcTrend = lastBtc.trend === "BULLISH" ? "BULLISH 🟢" : "BEARISH 🔴";
+              // Find the start of the current trend to use as a baseline for coin signals
+              for (let j = btcResults.length - 1; j >= 1; j--) {
+                if (btcResults[j].trend !== btcResults[j - 1].trend) {
+                  btcSignalTime = btcResults[j].time;
+                  break;
+                }
+              }
+              if (btcSignalTime === 0 && btcResults.length > 0) btcSignalTime = btcResults[0].time;
+              
+              // Store BTC Trend Info in a way the scanner loop can use
+              (global as any).btcTrendInfo = { trend: lastBtc.trend, signalTime: btcSignalTime };
             }
           }
         } catch (err) {
@@ -447,47 +459,47 @@ async function startServer() {
                   leverage: settings.leverage || 9
                 });
 
-                // Check recent closed candles (Reactive mode)
+                // User requirement: Signal must be FIRST after 1H BTC Signal
+                // and within LAST 10 CANDLES of the current timeframe.
                 const now = Date.now();
                 const timeframeToMs: Record<string, number> = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000 };
                 const tfMs = timeframeToMs[tf as string] || 300000;
-                const lookbackMs = tfMs * 2; // Check last 2 candle windows
-                const lookbackLimit = now - lookbackMs;
+                
+                const btcInfo = (global as any).btcTrendInfo || { trend: "UNKNOWN", signalTime: 0 };
+                const signalMaxAgeMs = tfMs * 10;
+                const signalAgeLimit = now - signalMaxAgeMs;
 
                 let foundValidSignal = null;
 
-                // Loop backwards starting from the last closed candle (length - 2)
-                for (let i = results.length - 2; i >= 0; i--) {
+                // Find the first signal that occurred after the BTC trend flip
+                let firstSignalAfterBtc = null;
+                for (let i = 0; i < results.length - 1; i++) {
                   const candle = results[i];
-                  if (candle.time < lookbackLimit) break;
+                  if (candle.time < btcInfo.signalTime) continue;
 
-                  const isBuy = candle.buySignal;
-                  const isSell = candle.sellSignal;
-                
-                  // 2. BTC Trend Alignment
-                  const isBtcBullish = btcTrend.startsWith("BULLISH");
-                  const isBtcBearish = btcTrend.startsWith("BEARISH");
-
-                  let signalType = "";
-                  if (isBuy) {
-                    if (isBtcBullish) {
-                      signalType = "BUY";
-                    } else {
-                      // Log mismatch once in a while or silently
-                      console.log(`Scanner: [MISMATCH] ${symbol} BUY signal but BTC is ${btcTrend}`);
-                    }
+                  if (candle.buySignal || candle.sellSignal) {
+                    firstSignalAfterBtc = {
+                      candle,
+                      type: candle.buySignal ? "BUY" : "SELL"
+                    };
+                    break;
                   }
-                  if (isSell) {
-                    if (isBtcBearish) {
-                      signalType = "SELL";
-                    } else {
-                      console.log(`Scanner: [MISMATCH] ${symbol} SELL signal but BTC is ${btcTrend}`);
-                    }
-                  }
+                }
 
-                  if (signalType) {
-                    foundValidSignal = { candle, type: signalType };
-                    break; // Found the most recent valid one
+                if (firstSignalAfterBtc) {
+                  const { candle, type } = firstSignalAfterBtc;
+
+                  // Apply Filter: Within last 10 candles
+                  const isRecent = candle.time >= signalAgeLimit;
+                  // Apply Filter: Alignment with BTC
+                  const isBtcBullish = btcInfo.trend === 'BULLISH';
+                  const isBtcBearish = btcInfo.trend === 'BEARISH';
+                  const isAligned = (type === "BUY" && isBtcBullish) || (type === "SELL" && isBtcBearish);
+                  // Apply Filter: Price < 0.9
+                  const isPriceOk = candle.close < 0.9;
+
+                  if (isRecent && isAligned && isPriceOk) {
+                    foundValidSignal = { candle, type };
                   }
                 }
 
@@ -856,8 +868,8 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     
-    // Run scanner every 1 minute for prompt alerts
-    setInterval(runScanner, 1 * 60 * 1000);
+    // Run scanner every 5 minutes for prompt alerts
+    setInterval(runScanner, 5 * 60 * 1000);
     // Run once on start
     runScanner();
   });
