@@ -16,6 +16,7 @@ const __dirname = path.dirname(__filename);
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore as getClientFirestore, 
+  initializeFirestore,
   collection, 
   getDocs,
   query,
@@ -47,8 +48,10 @@ try {
 
   if (firebaseConfig && (firebaseConfig.apiKey || firebaseConfig.projectId)) {
     const app = initializeApp(firebaseConfig);
-    db = getClientFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
-    console.log(`Firebase: Client SDK initialized for scanner on project ${firebaseConfig.projectId}`);
+    db = initializeFirestore(app, {
+      experimentalForceLongPolling: true
+    }, firebaseConfig.firestoreDatabaseId || "(default)");
+    console.log(`Firebase: Client SDK initialized with Long Polling for scanner on project ${firebaseConfig.projectId}`);
   } else {
     console.error("Firebase: Configuration is missing (no file or env vars). Scanner will not run.");
   }
@@ -389,10 +392,18 @@ async function startServer() {
               time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
             }));
             const btcResults = processIndicators(btcCandles, {
-              stSense: 14, 
-              stMult: 3.0,
-              rsiLen: 14,
-              rsiSm: 14,
+              bw: 30,                
+              alpha: 1.0,
+              period: 20,
+              phase: 2,
+              filter: 'Smooth',
+              baseMult: 1.0,
+              spacingMode: 'Linear',
+              sigmaWindow: 100,
+              useConfluence: true,
+              warmupBars: 3,
+              cooldownGap: 8,
+              signalMode: 'Confirmed',
               slPnL: 0.10,
               tpPnL: 0.30,
               tradeAmount: 0.9,
@@ -449,10 +460,18 @@ async function startServer() {
               for (const userDoc of usersInTf) {
                 const settings = userDoc.data();
                 const results = processIndicators(candles, {
-                  stSense: settings.stSense || 14,
-                  stMult: settings.stMult || 3.0,
-                  rsiLen: settings.rsiLen || 14,
-                  rsiSm: settings.rsiSm || 14,
+                  bw: settings.bw || 30,
+                  alpha: settings.alpha !== undefined ? settings.alpha : 1.0,
+                  period: settings.period || 20,
+                  phase: settings.phase !== undefined ? settings.phase : 2,
+                  filter: settings.filter || 'Smooth',
+                  baseMult: settings.baseMult !== undefined ? settings.baseMult : 1.0,
+                  spacingMode: settings.spacingMode || 'Linear',
+                  sigmaWindow: settings.sigmaWindow || 100,
+                  useConfluence: settings.useConfluence !== undefined ? settings.useConfluence : true,
+                  warmupBars: settings.warmupBars || 3,
+                  cooldownGap: settings.cooldownGap || 8,
+                  signalMode: settings.signalMode || 'Confirmed',
                   slPnL: settings.slPct || 0.10,
                   tpPnL: settings.tpPct || 0.30,
                   tradeAmount: settings.tradeAmount || 0.9,

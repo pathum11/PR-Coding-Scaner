@@ -92,16 +92,24 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Indicator Settings (v9 Sync)
-  const [stSense, setStSense] = useState(14);
-  const [stMult, setStMult] = useState(3.0);
-  const [rsiLen, setRsiLen] = useState(14);
-  const [rsiSm, setRsiSm] = useState(14);
+  // Indicator Settings
+  const [bw, setBw] = useState(30);
+  const [alpha, setAlpha] = useState(1.0);
+  const [period, setPeriod] = useState(20);
+  const [phase, setPhase] = useState(2);
+  const [filter, setFilter] = useState<'No Filter' | 'Smooth' | 'Zero Lag'>('Smooth');
+  const [baseMult, setBaseMult] = useState(1.0);
+  const [spacingMode, setSpacingMode] = useState<'Linear' | 'Exponential'>('Linear');
+  const [sigmaWindow, setSigmaWindow] = useState(100);
+  const [useConfluence, setUseConfluence] = useState(true);
+  const [warmupBars, setWarmupBars] = useState(3);
+  const [cooldownGap, setCooldownGap] = useState(8);
+  const [signalMode, setSignalMode] = useState<'Confirmed' | 'Realtime'>('Confirmed');
   const [slPnL, setSlPnL] = useState(0.10);
   const [tpPnL, setTpPnL] = useState(0.30);
   
   // BTC Trend State
-  const [btcTrend, setBtcTrend] = useState<{ trend: string, signal?: string } | null>(null);
+  const [btcTrend, setBtcTrend] = useState<{ trend: string, signalTime: number } | null>(null);
   const [btcTrendLoading, setBtcTrendLoading] = useState(false);
 
   // Scanner State
@@ -179,11 +187,11 @@ export default function App() {
             if (data.autoScan !== undefined) setAutoScan(data.autoScan);
             if (data.soundEnabled !== undefined) setSoundEnabled(data.soundEnabled);
             if (data.timeframe !== undefined) setTimeframe(data.timeframe);
-            if (data.stSense !== undefined) setStSense(data.stSense);
-            if (data.stMult !== undefined) setStMult(data.stMult);
-            if (data.leverage !== undefined) setLeverage(data.leverage);
-            if (data.rsiLen !== undefined) setRsiLen(data.rsiLen);
-            if (data.rsiSm !== undefined) setRsiSm(data.rsiSm);
+            if (data.bw !== undefined) setBw(data.bw);
+            if (data.alpha !== undefined) setAlpha(data.alpha);
+            if (data.baseMult !== undefined) setBaseMult(data.baseMult);
+            if (data.spacingMode !== undefined) setSpacingMode(data.spacingMode);
+            if (data.useConfluence !== undefined) setUseConfluence(data.useConfluence);
             if (data.slPct !== undefined) setSlPnL(data.slPct);
             if (data.tpPct !== undefined) setTpPnL(data.tpPct);
             if (data.binanceKey) setBinanceKey(data.binanceKey);
@@ -221,6 +229,9 @@ export default function App() {
         ...doc.data()
       }));
       setActivityLogs(logs);
+    }, (err) => {
+      console.warn("Firestore listener warning (handled):", err.message);
+      // Firestore SDK automatically reconnects, so we just log it as a warning
     });
 
     return () => unsubscribe();
@@ -237,10 +248,18 @@ export default function App() {
         autoScan,
         soundEnabled,
         timeframe,
-        stSense,
-        stMult,
-        rsiLen,
-        rsiSm,
+        bw,
+        alpha,
+        period,
+        phase,
+        filter,
+        baseMult,
+        spacingMode,
+        sigmaWindow,
+        useConfluence,
+        warmupBars,
+        cooldownGap,
+        signalMode,
         slPct: slPnL,
         tpPct: tpPnL,
         leverage,
@@ -266,7 +285,7 @@ export default function App() {
     }
   }, [
     telegramEnabled, telegramToken, telegramChatId, autoScan, soundEnabled, timeframe,
-    stSense, stMult, rsiLen, rsiSm, slPnL, tpPnL, scanLookbackMinutes,
+    bw, alpha, baseMult, spacingMode, useConfluence, slPnL, tpPnL, scanLookbackMinutes,
     binanceKey, binanceSecret, autoTradeEnabled, tradeAmount, maxOpenTrades, user
   ]);
 
@@ -709,10 +728,11 @@ export default function App() {
             }));
             
             const processed = processIndicators(formatted, { 
-              stSense, 
-              stMult, 
-              rsiLen,
-              rsiSm,
+              bw,
+              alpha,
+              baseMult,
+              spacingMode,
+              useConfluence,
               slPnL,
               tpPnL,
               tradeAmount,
@@ -909,14 +929,8 @@ export default function App() {
           time: d[0], open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5])
         }));
         const results = processIndicators(formatted, {
-          stSense: 14, 
-          stMult: 3.0,
-          rsiLen: 14,
-          rsiSm: 14,
-          slPnL: 0.10,
-          tpPnL: 0.30,
-          tradeAmount: 0.9,
-          leverage: 9
+          bw, alpha, period, phase, filter, baseMult, spacingMode, sigmaWindow, useConfluence, warmupBars, cooldownGap, signalMode,
+          slPnL, tpPnL, tradeAmount, leverage
         });
         const last = results[results.length - 1];
         if (last) {
@@ -946,16 +960,10 @@ export default function App() {
   const processedData = useMemo(() => {
     if (candles.length === 0) return [];
     return processIndicators(candles, { 
-      stSense, 
-      stMult, 
-      rsiLen,
-      rsiSm,
-      slPnL,
-      tpPnL,
-      tradeAmount,
-      leverage
+      bw, alpha, period, phase, filter, baseMult, spacingMode, sigmaWindow, useConfluence, warmupBars, cooldownGap, signalMode,
+      slPnL, tpPnL, tradeAmount, leverage
     });
-  }, [candles, stSense, stMult, rsiLen, rsiSm, slPnL, tpPnL, tradeAmount, leverage]);
+  }, [candles, bw, alpha, period, phase, filter, baseMult, spacingMode, sigmaWindow, useConfluence, warmupBars, cooldownGap, signalMode, slPnL, tpPnL, tradeAmount, leverage]);
 
   const latest = processedData[processedData.length - 1];
 
@@ -1136,7 +1144,7 @@ export default function App() {
                   <ListFilter className="w-5 h-5 text-orange-500" /> Filtered Signals
                 </CardTitle>
                 <CardDescription className="text-zinc-400">
-                  Rules: Supertrend Flip + EMA Persistency + RSI Alignment
+                  Rules: Artemis Regression Bands + Multi-Sigma Confidence Interval
                 </CardDescription>
               </div>
               <Badge variant="outline" className="bg-black/40 border-white/10 text-white">
@@ -1297,41 +1305,59 @@ export default function App() {
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">ST Sensitivity</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Bandwidth</label>
                       <Input 
                         type="number" 
-                        value={isNaN(stSense) ? '' : stSense} 
-                        onChange={(e) => setStSense(parseInt(e.target.value))}
+                        value={isNaN(bw) ? '' : bw} 
+                        onChange={(e) => setBw(parseInt(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">ST Multiplier</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Kernel Alpha</label>
                       <Input 
                         type="number" 
                         step="0.1"
-                        value={isNaN(stMult) ? '' : stMult} 
-                        onChange={(e) => setStMult(parseFloat(e.target.value))}
+                        value={isNaN(alpha) ? '' : alpha} 
+                        onChange={(e) => setAlpha(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">RSI Length</label>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Base Multiplier</label>
                       <Input 
                         type="number" 
-                        value={isNaN(rsiLen) ? '' : rsiLen} 
-                        onChange={(e) => setRsiLen(parseInt(e.target.value))}
+                        step="0.1"
+                        value={isNaN(baseMult) ? '' : baseMult} 
+                        onChange={(e) => setBaseMult(parseFloat(e.target.value))}
                         className="bg-black/40 border-white/10 h-8 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500">RSI Smoothing</label>
-                      <Input 
-                        type="number" 
-                        value={isNaN(rsiSm) ? '' : rsiSm} 
-                        onChange={(e) => setRsiSm(parseInt(e.target.value))}
-                        className="bg-black/40 border-white/10 h-8 text-xs font-mono"
-                      />
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Spacing Mode</label>
+                      <select 
+                        value={spacingMode} 
+                        onChange={(e) => setSpacingMode(e.target.value as any)}
+                        className="w-full bg-black/40 border border-white/10 h-8 text-xs font-mono rounded-md px-2 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      >
+                        <option value="Linear">Linear</option>
+                        <option value="Exponential">Exponential</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center justify-between p-2 bg-black/20 rounded-md border border-white/5">
+                      <label className="text-[10px] uppercase font-bold text-zinc-500">Trend Conf.</label>
+                      <button 
+                        onClick={() => setUseConfluence(!useConfluence)}
+                        className={cn(
+                          "w-8 h-4 rounded-full transition-colors relative",
+                          useConfluence ? "bg-orange-500" : "bg-zinc-800"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform",
+                          useConfluence ? "translate-x-4.5" : "translate-x-0.5"
+                        )} />
+                      </button>
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] uppercase font-bold text-zinc-500">Default Leverage</label>
@@ -1388,11 +1414,11 @@ export default function App() {
                   <CardContent className="space-y-3 p-4">
                     <div className="flex items-center gap-3">
                       <Badge className="bg-emerald-500/20 text-emerald-400 border-none text-[10px] py-0 h-5">BUY</Badge>
-                      <span className="text-[10px] text-zinc-400">V9 Sync Long Signal</span>
+                      <span className="text-[10px] text-zinc-400">Artemis Reversion Long</span>
                     </div>
                     <div className="flex items-center gap-3">
                       <Badge className="bg-rose-500/20 text-rose-400 border-none text-[10px] py-0 h-5">SELL</Badge>
-                      <span className="text-[10px] text-zinc-400">V9 Sync Short Signal</span>
+                      <span className="text-[10px] text-zinc-400">Artemis Reversion Short</span>
                     </div>
                   </CardContent>
                 </Card>
