@@ -1,6 +1,6 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore } from 'firebase/firestore';
 import firebaseConfigJSON from '../../firebase-applet-config.json';
 
 const getFirebaseConfig = () => {
@@ -8,7 +8,7 @@ const getFirebaseConfig = () => {
     return firebaseConfigJSON;
   }
   
-  // Dynamic fallback for production environments (e.g. Railway)
+  // Dynamic fallback for production environments
   return {
     apiKey: (import.meta as any).env.VITE_FIREBASE_API_KEY,
     authDomain: (import.meta as any).env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -29,5 +29,9 @@ if (!getApps().length) {
   app = getApps()[0];
 }
 
-export const db = getFirestore(app, config.firestoreDatabaseId || '(default)');
+// Enable long-polling to prevent "Disconnecting idle stream" errors in iframe environments
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true
+}, config.firestoreDatabaseId || '(default)');
+
 export const auth = getAuth(app);

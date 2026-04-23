@@ -853,7 +853,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
 
-  // Precise Auto-scan aligned with the clock (every 5 mins: :00, :05, :10...)
+  // Precise Auto-scan aligned with the clock (every 5 mins + 2 min offset: :02, :07, :12...)
   useEffect(() => {
     if (!autoScan) return;
 
@@ -861,18 +861,21 @@ export default function App() {
     
     const scheduleNextScan = () => {
       const now = new Date();
-      // Calculate mins until next :00, :05, :10...
-      let nextMinute = 5 - (now.getMinutes() % 5);
-      // If we are exactly on the mark (e.g. 05:00.000), wait another 5 mins
-      if (nextMinute === 5 && now.getSeconds() === 0 && now.getMilliseconds() === 0) {
-        nextMinute = 5;
+      const m = now.getMinutes();
+      const rem = m % 5;
+      
+      // Calculate mins until next :02, :07, :12...
+      let delayMinutes = (rem < 2) ? (2 - rem) : (7 - rem);
+      // If we are exactly on the mark (e.g. 05:02.000), wait another 5 mins
+      if (delayMinutes === 0 && now.getSeconds() === 0 && now.getMilliseconds() === 0) {
+        delayMinutes = 5;
       }
       
-      const delay = (nextMinute * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
+      const delay = (delayMinutes * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
 
       timer = setTimeout(async () => {
         if (!scanning && autoScan) {
-          console.log(`Scanner: Executing clock-aligned auto-scan at ${new Date().toLocaleTimeString()}`);
+          console.log(`Scanner: Executing clock-aligned auto-scan (offset) at ${new Date().toLocaleTimeString()}`);
           // Refresh BTC Trend right before scanning to ensure it's loaded
           await fetchBtcTrend('1h');
           startScan();

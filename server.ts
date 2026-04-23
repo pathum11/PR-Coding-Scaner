@@ -868,10 +868,22 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     
-    // Run scanner every 5 minutes for prompt alerts
-    setInterval(runScanner, 5 * 60 * 1000);
-    // Run once on start
-    runScanner();
+    // Schedule scanner aligned with the clock (every 5 mins + 2 min offset: :02, :07, :12...)
+    const scheduleScanner = () => {
+      const now = new Date();
+      const m = now.getMinutes();
+      const rem = m % 5;
+      let delayMinutes = (rem < 2) ? (2 - rem) : (7 - rem);
+      const delay = (delayMinutes * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
+
+      setTimeout(async () => {
+        console.log(`Server Scanner: Executing clock-aligned scan (offset) at ${new Date().toLocaleTimeString()}`);
+        await runScanner();
+        scheduleScanner(); // Schedule next
+      }, delay);
+    };
+
+    scheduleScanner();
   });
 }
 
