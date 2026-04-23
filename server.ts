@@ -556,6 +556,7 @@ async function startServer() {
                                     `Recommended Leverage: <code>${candle.recommendedLeverage || '7'}x</code>\n\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>\n` +
+                                    `Chart: <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${symbol.replace('USDT', 'USD')}">Open in TradingView</a>\n` +
                                     `Message: AI Signal Confirmed ✅`;
 
                     const telegramUrl = `https://api.telegram.org/bot${settings.telegramToken}/sendMessage`;
@@ -887,21 +888,29 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     
-    // Schedule scanner aligned with the clock (every 5 mins + 2 min offset: :02, :07, :12...)
+    // Schedule scanner aligned with the clock (every 5 mins: :00, :07, :12, :17...)
     const scheduleScanner = () => {
       const now = new Date();
       const m = now.getMinutes();
-      const rem = m % 5;
-      let delayMinutes = (rem < 2) ? (2 - rem) : (7 - rem);
+      
+      // Calculate delay to next desired minute
+      const targets = [0, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 57];
+      let target = targets.find(t => t > m);
+      if (target === undefined) target = 0; // Wrap around to :00 next hour
+      
+      let delayMinutes = (target > m ? target - m : (60 - m + target));
       const delay = (delayMinutes * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
 
       setTimeout(async () => {
-        console.log(`Server Scanner: Executing clock-aligned scan (offset) at ${new Date().toLocaleTimeString()}`);
+        console.log(`Server Scanner: Executing clock-aligned scan at ${new Date().toLocaleTimeString()}`);
         await runScanner();
         scheduleScanner(); // Schedule next
       }, delay);
     };
 
+    // Run immediately on boot
+    console.log("Server Scanner: Executing initial scan on boot.");
+    runScanner();
     scheduleScanner();
   });
 }

@@ -568,6 +568,14 @@ export default function App() {
     return () => clearInterval(interval);
   }, [soundEnabled]);
 
+  // Trigger initial scan upon user authentication
+  useEffect(() => {
+    if (user && !lastScanTime) {
+      startScan();
+      setLastScanTime(Date.now());
+    }
+  }, [user]);
+
   // Auto-scan logic
   useEffect(() => {
     if (!autoScan) return;
