@@ -548,7 +548,7 @@ async function startServer() {
                                     `Recommended Leverage: <code>${candle.recommendedLeverage || '7'}x</code>\n\n` +
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>\n` +
-                                    `Chart: <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${symbol.replace('USDT', 'USD')}">Open in TradingView</a>\n` +
+                                    `Chart: <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${symbol}.P">Open in TradingView</a>\n` +
                                     `Message: Artemis Signal Confirmed ✅`;
 
                     const telegramUrl = `https://api.telegram.org/bot${settings.telegramToken}/sendMessage`;
