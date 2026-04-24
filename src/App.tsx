@@ -568,33 +568,56 @@ export default function App() {
     return () => clearInterval(interval);
   }, [soundEnabled]);
 
-  // Trigger initial scan upon user authentication
+  // Consolidated Auto-scan logic
   useEffect(() => {
-    if (user && !lastScanTime) {
-      startScan();
-      setLastScanTime(Date.now());
-    }
-  }, [user]);
+    if (!autoScan || !user) return;
 
-  // Auto-scan logic
-  useEffect(() => {
-    if (!autoScan) return;
-
-    const interval = setInterval(() => {
-      if (!scanning) {
-        startScan();
-        setLastScanTime(Date.now());
+    let timer: NodeJS.Timeout;
+    
+    const scheduleNextScan = () => {
+      const now = new Date();
+      const m = now.getMinutes();
+      const rem = m % 5;
+      
+      // Calculate mins until next :02, :07, :12... (Offset by 2 mins to ensure Binance data is closed/ready)
+      let delayMinutes = (rem < 2) ? (2 - rem) : (7 - rem);
+      
+      // If we are exactly on the mark (e.g. 05:02.000), wait another 5 mins
+      if (delayMinutes === 0 && now.getSeconds() === 0 && now.getMilliseconds() === 0) {
+        delayMinutes = 5;
       }
-    }, 300000); // Every 5 minutes
+      
+      const delay = (delayMinutes * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
 
-    // Initial scan if enabled
-    if (!scanning && (!lastScanTime || Date.now() - lastScanTime > 300000)) {
-      startScan();
-      setLastScanTime(Date.now());
+      timer = setTimeout(async () => {
+        if (autoScan && !scanning) {
+          console.log(`Scanner: Executing clock-aligned auto-scan at ${new Date().toLocaleTimeString()}`);
+          // Always ensure BTC trend is the latest before coin scanning
+          const freshTrend = await fetchBtcTrend('1h');
+          startScan(freshTrend || undefined);
+        }
+        scheduleNextScan(); 
+      }, delay);
+    };
+
+    // Run initial scan ONLY ONCE when user is ready AND if btcTrend is not null
+    // If btcTrend is null, fetchBtcTrend will be called by startScan or the header sync
+    if (!lastScanTime) {
+      const runInitial = async () => {
+        setScanning(true); // Pre-set scanning to block redundant triggers
+        const freshTrend = await fetchBtcTrend('1h');
+        startScan(freshTrend || undefined);
+        setLastScanTime(Date.now());
+      };
+      runInitial();
     }
 
-    return () => clearInterval(interval);
-  }, [autoScan, scanning, lastScanTime]);
+    scheduleNextScan();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [autoScan, user]); // No scanning/lastScanTime in deps to avoid infinite loops/resets
 
   const addAlert = (symbol: string, type: string, signalTime: number, tp?: number, sl?: number, trend?: string, leverage?: number) => {
     const alertTime = signalTime; // Trigger immediately when scanned
@@ -653,12 +676,14 @@ export default function App() {
     }
   };
 
-  const startScan = async () => {
+  const startScan = async (trendOverride?: { trend: string, signalTime: number }) => {
+    const activeTrend = trendOverride || btcTrend;
     setScanning(true);
-    setScanResults([]);
+    // Don't clear results immediately to avoid empty screen flash
+    // setScanResults([]); 
     setScanProgress(0);
     
-    if (!btcTrend) {
+    if (!activeTrend) {
       setError("BTC Trend not yet loaded. Please wait for market status to sync (Check header).");
       setScanning(false);
       return;
@@ -758,7 +783,7 @@ export default function App() {
             const timeframeToMs: Record<string, number> = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000 };
             const tfMs = timeframeToMs[timeframe] || 300000;
             const signalMaxAgeMs = tfMs * 30;
-            const btcSignalTime = btcTrend?.signalTime || 0;
+            const btcSignalTime = activeTrend.signalTime;
             const signalAgeLimit = now - signalMaxAgeMs;
             
             // Find a valid signal within the lookback window
@@ -776,9 +801,9 @@ export default function App() {
                 const isRecent = candle.time >= signalAgeLimit;
                 
                 // FILTER: Match BTC Market Context if available
-                const matchesBtc = !btcTrend || btcTrend.trend === signalType;
+                const matchesBtc = !activeTrend || activeTrend.trend === signalType;
                 // FILTER: Must be after/on the same candle as the market trend established
-                const afterBtcFlip = btcSignalTime === 0 || candle.time >= btcSignalTime;
+                const afterBtcFlip = activeTrend.signalTime === 0 || candle.time >= activeTrend.signalTime;
 
                 if (isRecent && matchesBtc && afterBtcFlip) {
                   foundSignal = {
@@ -885,45 +910,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
 
-  // Precise Auto-scan aligned with the clock (every 5 mins + 2 min offset: :02, :07, :12...)
-  useEffect(() => {
-    if (!autoScan) return;
-
-    let timer: NodeJS.Timeout;
-    
-    const scheduleNextScan = () => {
-      const now = new Date();
-      const m = now.getMinutes();
-      const rem = m % 5;
-      
-      // Calculate mins until next :02, :07, :12...
-      let delayMinutes = (rem < 2) ? (2 - rem) : (7 - rem);
-      // If we are exactly on the mark (e.g. 05:02.000), wait another 5 mins
-      if (delayMinutes === 0 && now.getSeconds() === 0 && now.getMilliseconds() === 0) {
-        delayMinutes = 5;
-      }
-      
-      const delay = (delayMinutes * 60 * 1000) - (now.getSeconds() * 1000) - now.getMilliseconds();
-
-      timer = setTimeout(async () => {
-        if (!scanning && autoScan) {
-          console.log(`Scanner: Executing clock-aligned auto-scan (offset) at ${new Date().toLocaleTimeString()}`);
-          // Refresh BTC Trend right before scanning to ensure it's loaded
-          await fetchBtcTrend('1h');
-          startScan();
-        }
-        scheduleNextScan(); // Schedule for the next interval
-      }, delay);
-    };
-
-    scheduleNextScan();
-
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [timeframe, autoScan]); 
-
-  const fetchBtcTrend = async (forcedTF?: string) => {
+  const fetchBtcTrend = async (forcedTF?: string): Promise<{ trend: string, signalTime: number } | null> => {
     setBtcTrendLoading(true);
     const contextTF = forcedTF || '1h';
     try {
@@ -934,7 +921,7 @@ export default function App() {
           data = await response.json();
         } catch (e) {
           console.warn("BTC Trend: Failed to parse JSON response");
-          return;
+          return null;
         }
         
         const formatted: Candle[] = data.map((d: any) => ({
@@ -956,10 +943,12 @@ export default function App() {
           }
           if (btcSignalTime === 0 && results.length > 0) btcSignalTime = results[0].time;
 
-          setBtcTrend({
+          const trendData = {
             trend: last.trend,
             signalTime: btcSignalTime
-          });
+          };
+          setBtcTrend(trendData);
+          return trendData;
         }
       }
     } catch (e) {
@@ -967,6 +956,7 @@ export default function App() {
     } finally {
       setBtcTrendLoading(false);
     }
+    return null;
   };
 
   const processedData = useMemo(() => {
@@ -1234,7 +1224,7 @@ export default function App() {
                                 <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
                                 <td className="p-4">
                                   <a 
-                                    href={`https://www.tradingview.com/chart/?symbol=BINANCE:${res.symbol}.P`}
+                                    href={`https://www.tradingview.com/chart/?symbol=BINANCE:${res.symbol}PERP`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="flex items-center gap-1.5 px-3 py-1 bg-zinc-800/80 hover:bg-orange-500/20 text-zinc-100 hover:text-orange-400 rounded-md text-[10px] font-bold transition-all border border-zinc-700 hover:border-orange-500/30 uppercase tracking-widest w-fit"
