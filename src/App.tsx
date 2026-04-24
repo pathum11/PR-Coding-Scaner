@@ -1224,7 +1224,7 @@ export default function App() {
                                 <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
                                 <td className="p-4">
                                   <a 
-                                    href={`https://www.tradingview.com/chart/?symbol=BINANCE:${res.symbol}PERP`}
+                                    href={`https://www.tradingview.com/chart/?symbol=BINANCE:${res.symbol}.P`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="flex items-center gap-1.5 px-3 py-1 bg-zinc-800/80 hover:bg-orange-500/20 text-zinc-100 hover:text-orange-400 rounded-md text-[10px] font-bold transition-all border border-zinc-700 hover:border-orange-500/30 uppercase tracking-widest w-fit"
