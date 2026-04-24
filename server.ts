@@ -504,8 +504,13 @@ async function startServer() {
                     
                     // Apply Filter: Within last 30 candles
                     const isRecent = candle.time >= signalAgeLimit;
+                    
+                    // Apply Filter: Match BTC Market Context if available
+                    const matchesBtc = btcInfo.trend === "UNKNOWN" || signalType === btcInfo.trend;
+                    // Apply Filter: Must be after/on the same candle as the market trend established
+                    const afterBtcFlip = btcInfo.signalTime === 0 || candle.time >= btcInfo.signalTime;
 
-                    if (isRecent) {
+                    if (isRecent && matchesBtc && afterBtcFlip) {
                       foundValidSignal = { candle, type: signalType };
                       break; // Capture most recent valid signal
                     }

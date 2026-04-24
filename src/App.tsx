@@ -774,8 +774,13 @@ export default function App() {
                 
                 // FILTER: Within last 30 candles
                 const isRecent = candle.time >= signalAgeLimit;
+                
+                // FILTER: Match BTC Market Context if available
+                const matchesBtc = !btcTrend || btcTrend.trend === signalType;
+                // FILTER: Must be after/on the same candle as the market trend established
+                const afterBtcFlip = btcSignalTime === 0 || candle.time >= btcSignalTime;
 
-                if (isRecent) {
+                if (isRecent && matchesBtc && afterBtcFlip) {
                   foundSignal = {
                     candle,
                     type: signalType as 'BUY' | 'SELL',
