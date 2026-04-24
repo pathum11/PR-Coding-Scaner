@@ -49,7 +49,8 @@ import {
   Sparkles,
   MessageSquare,
   X,
-  Bot
+  Bot,
+  ExternalLink
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -539,11 +540,10 @@ export default function App() {
                             `COPY COIN: <code>${alert.symbol}</code>\n\n` +
                             `Type: <code>${alert.type} ${emoji}</code>\n` +
                             `Timeframe: <code>${timeframe}</code>\n` +
-                            `BTCUSDT Trend: <code>${btcTrendText}</code>\n` +
                             `Symbol Trend: <code>${alert.trend || 'N/A'} ${alert.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
                             `Recommended Leverage: <code>${alert.leverage || '9'}x</code>\n\n` +
                             `Time: <code>${newNotification.time}</code>\n` +
-                            `Message: AI Signal Confirmed ✅`;
+                            `Message: Artemis Signal Confirmed ✅`;
 
             sendTelegramMessage(phoneMsg);
             showPushNotification(`Signal Alert: ${alert.symbol}`, `${alert.type} signal reached!`);
@@ -738,9 +738,16 @@ export default function App() {
             const processed = processIndicators(formatted, { 
               bw,
               alpha,
+              period,
+              phase,
+              filter,
               baseMult,
               spacingMode,
+              sigmaWindow,
               useConfluence,
+              warmupBars,
+              cooldownGap,
+              signalMode,
               slPnL,
               tpPnL,
               tradeAmount,
@@ -750,44 +757,36 @@ export default function App() {
             const now = Date.now();
             const timeframeToMs: Record<string, number> = { '1m': 60000, '3m': 180000, '5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000 };
             const tfMs = timeframeToMs[timeframe] || 300000;
-            const signalMaxAgeMs = tfMs * 10;
+            const signalMaxAgeMs = tfMs * 30;
             const btcSignalTime = btcTrend?.signalTime || 0;
             const signalAgeLimit = now - signalMaxAgeMs;
             
-            // Find the FIRST signal that occurred after the BTC trend flip
+            // Find a valid signal within the lookback window
             let foundSignal = null;
-            for (let j = 0; j < processed.length - 1; j++) {
+            for (let j = processed.length - 2; j >= 0; j--) {
               const candle = processed[j];
-              if (candle.time < btcSignalTime) continue;
-
+              
               const isBuy = candle.buySignal;
               const isSell = candle.sellSignal;
               
               if (isBuy || isSell) {
                 const signalType = isBuy ? 'BUY' : 'SELL';
                 
-                // FILTER: Alignment with BTC
-                const isBtcBullish = btcTrend?.trend === 'BULLISH';
-                const isBtcBearish = btcTrend?.trend === 'BEARISH';
-                const isAligned = (signalType === 'BUY' && isBtcBullish) || (signalType === 'SELL' && isBtcBearish);
-                
-                // FILTER: Market Price < 0.9 USDT
-                const isPriceOk = candle.close < 0.9;
-                
-                // FILTER: Within last 10 candles
+                // FILTER: Within last 30 candles
                 const isRecent = candle.time >= signalAgeLimit;
 
-                if (isAligned && isPriceOk && isRecent) {
+                if (isRecent) {
                   foundSignal = {
                     candle,
                     type: signalType as 'BUY' | 'SELL',
-                    source: 'Triple Confirmation'
+                    source: 'Artemis Strategy'
                   };
+                  break; // Found the most recent valid signal
                 }
-                // Break after finding the FIRST one since BTC change, 
-                // even if it didn't pass the filters (it's the first occurrence)
-                break;
               }
+              
+              // Only look back 40 candles for performance
+              if (processed.length - j > 40) break;
             }
 
             if (foundSignal) {
@@ -1168,7 +1167,7 @@ export default function App() {
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Symbol</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Signal</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Market Price</th>
-                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">AI Rationale</th>
+                            <th className="p-4 text-xs font-medium text-zinc-400 uppercase">TradingView</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Time</th>
                             <th className="p-4 text-xs font-medium text-zinc-400 uppercase">Action</th>
                           </tr>
@@ -1229,22 +1228,15 @@ export default function App() {
                                 </td>
                                 <td className="p-4 font-mono text-zinc-300">${res.price.toFixed(4)}</td>
                                 <td className="p-4">
-                                  <div className="max-w-[200px]">
-                                    {aiAnalysis[`${res.symbol}-${res.type}`] ? (
-                                      <p className="text-[10px] text-zinc-400 leading-tight italic line-clamp-2">
-                                        {aiAnalysis[`${res.symbol}-${res.type}`]}
-                                      </p>
-                                    ) : (
-                                      <button 
-                                        onClick={() => analyzeSignalWithAI(res.symbol, res.type, res.price)}
-                                        disabled={analyzingId === `${res.symbol}-${res.type}`}
-                                        className="flex items-center gap-1.5 text-[9px] font-bold text-orange-500/60 hover:text-orange-500 transition-colors uppercase tracking-wider"
-                                      >
-                                        <Sparkles className={cn("w-3 h-3", analyzingId === `${res.symbol}-${res.type}` && "animate-spin")} />
-                                        {analyzingId === `${res.symbol}-${res.type}` ? 'Analyzing...' : 'AI Perspective'}
-                                      </button>
-                                    )}
-                                  </div>
+                                  <a 
+                                    href={`https://www.tradingview.com/chart/?symbol=BINANCE:${res.symbol.replace('USDT', 'USD')}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-zinc-800/80 hover:bg-orange-500/20 text-zinc-100 hover:text-orange-400 rounded-md text-[10px] font-bold transition-all border border-zinc-700 hover:border-orange-500/30 uppercase tracking-widest w-fit"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    Chart
+                                  </a>
                                 </td>
                                 <td className="p-4 text-xs text-zinc-500 font-mono">
                                   {new Date(res.time).toLocaleTimeString('en-US', {

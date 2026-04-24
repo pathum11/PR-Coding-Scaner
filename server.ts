@@ -93,7 +93,12 @@ async function startServer() {
   // Background Scanner Logic
   const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'CRVUSDT', 'SUSHIUSDT'];
   const BINANCE_ENDPOINTS = [
-    'https://fapi.binance.com'
+    'https://fapi.binance.com',
+    'https://fapi1.binance.com',
+    'https://fapi2.binance.com',
+    'https://fapi3.binance.com',
+    'https://fapi4.binance.com',
+    'https://fapi5.binance.com'
   ];
 
   // Simple In-Memory Cache to prevent constant fetching from Binance
@@ -485,41 +490,29 @@ async function startServer() {
                 const tfMs = timeframeToMs[tf as string] || 300000;
                 
                 const btcInfo = (global as any).btcTrendInfo || { trend: "UNKNOWN", signalTime: 0 };
-                const signalMaxAgeMs = tfMs * 10;
+                const signalMaxAgeMs = tfMs * 30;
                 const signalAgeLimit = now - signalMaxAgeMs;
 
                 let foundValidSignal = null;
 
-                // Find the first signal that occurred after the BTC trend flip
-                let firstSignalAfterBtc = null;
-                for (let i = 0; i < results.length - 1; i++) {
+                // Find a valid recent signal
+                for (let i = results.length - 2; i >= 0; i--) {
                   const candle = results[i];
-                  if (candle.time < btcInfo.signalTime) continue;
-
+                  
                   if (candle.buySignal || candle.sellSignal) {
-                    firstSignalAfterBtc = {
-                      candle,
-                      type: candle.buySignal ? "BUY" : "SELL"
-                    };
-                    break;
+                    const signalType = candle.buySignal ? "BUY" : "SELL";
+                    
+                    // Apply Filter: Within last 30 candles
+                    const isRecent = candle.time >= signalAgeLimit;
+
+                    if (isRecent) {
+                      foundValidSignal = { candle, type: signalType };
+                      break; // Capture most recent valid signal
+                    }
                   }
-                }
-
-                if (firstSignalAfterBtc) {
-                  const { candle, type } = firstSignalAfterBtc;
-
-                  // Apply Filter: Within last 10 candles
-                  const isRecent = candle.time >= signalAgeLimit;
-                  // Apply Filter: Alignment with BTC
-                  const isBtcBullish = btcInfo.trend === 'BULLISH';
-                  const isBtcBearish = btcInfo.trend === 'BEARISH';
-                  const isAligned = (type === "BUY" && isBtcBullish) || (type === "SELL" && isBtcBearish);
-                  // Apply Filter: Price < 0.9
-                  const isPriceOk = candle.close < 0.9;
-
-                  if (isRecent && isAligned && isPriceOk) {
-                    foundValidSignal = { candle, type };
-                  }
+                  
+                  // Performance: only check back 40 candles
+                  if (results.length - i > 40) break;
                 }
 
                 // Heartbeat log every 10 mins to show scanner is alive
@@ -548,7 +541,6 @@ async function startServer() {
                                     `COPY COIN: <code>${symbol}</code>\n\n` +
                                     `Type: <code>${signalType} ${emoji}</code>\n` +
                                     `Timeframe: <code>${tf}</code>\n` +
-                                    `BTCUSDT Trend: <code>${btcTrend}</code>\n` +
                                     `Symbol Trend: <code>${candle.trend} ${candle.trend === 'BULLISH' ? '🟢' : '🔴'}</code>\n\n` +
                                     `Entry Price: <code>${candle.close}</code>\n` +
                                     `Take Profit: <code>${candle.tpPrice ? Number(candle.tpPrice).toFixed(4) : '---'}</code>\n` +
@@ -557,7 +549,7 @@ async function startServer() {
                                     `Time: <code>${timeStr}</code>\n` +
                                     `Date: <code>${dateStr}</code>\n` +
                                     `Chart: <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${symbol.replace('USDT', 'USD')}">Open in TradingView</a>\n` +
-                                    `Message: AI Signal Confirmed ✅`;
+                                    `Message: Artemis Signal Confirmed ✅`;
 
                     const telegramUrl = `https://api.telegram.org/bot${settings.telegramToken}/sendMessage`;
                     const telController = new AbortController();
