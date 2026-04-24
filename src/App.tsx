@@ -646,15 +646,24 @@ export default function App() {
     setTimeout(() => setCopiedSymbol(null), 2000);
   };
 
-  const fetchWithRetry = async (url: string, options: RequestInit = {}, retries = 3, backoff = 500): Promise<Response> => {
+  const fetchWithRetry = async (url: string, options: RequestInit = {}, retries = 3, backoff = 500, timeout = 30000): Promise<Response> => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(id);
+
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const wait = retryAfter ? parseInt(retryAfter) * 1000 : backoff;
         if (retries > 0) {
+          console.warn(`Scanner: Rate limited (429) on ${url}. Retrying after ${wait}ms...`);
           await new Promise(resolve => setTimeout(resolve, wait));
-          return fetchWithRetry(url, options, retries - 1, backoff * 2);
+          return fetchWithRetry(url, options, retries - 1, backoff * 2, timeout);
         }
       }
       
@@ -662,17 +671,23 @@ export default function App() {
       if (url.startsWith('/api/') && response.ok) {
         const contentType = response.headers.get('content-type');
         if (contentType && !contentType.includes('application/json')) {
-          throw new Error(`API returned ${contentType} instead of JSON. Check server logs.`);
+          console.error(`Scanner: Non-JSON response from ${url}: ${contentType}`);
+          throw new Error(`API returned ${contentType} instead of JSON.`);
         }
       }
 
       return response;
-    } catch (error) {
+    } catch (error: any) {
+      clearTimeout(id);
+      const isAbort = error.name === 'AbortError' || error.message?.includes('aborted');
+      const errorMsg = isAbort ? 'Request timed out' : (error.message || 'Network error');
+      
       if (retries > 0) {
+        console.warn(`Scanner: Fetch failed for ${url} (${errorMsg}). Retrying in ${backoff}ms... (${retries} left)`);
         await new Promise(resolve => setTimeout(resolve, backoff));
-        return fetchWithRetry(url, options, retries - 1, backoff * 2);
+        return fetchWithRetry(url, options, retries - 1, backoff * 2, timeout);
       }
-      throw error;
+      throw new Error(errorMsg);
     }
   };
 
@@ -719,9 +734,11 @@ export default function App() {
       const total = usdtSymbols.length;
       setTotalSymbols(total);
       const results: any[] = [];
-      const batchSize = 10; // Reduced batch size for better stability
+      const batchSize = 12; // Batch size
 
       for (let i = 0; i < usdtSymbols.length; i += batchSize) {
+        if (!autoScan && i > 0 && !scanning) break; // Allow stop
+
         const batch = usdtSymbols.slice(i, i + batchSize);
         
         await Promise.all(batch.map(async (s, index) => {
@@ -730,14 +747,16 @@ export default function App() {
           
           try {
             // Use local proxy to avoid CORS/Rate limits for scanner
-            const klinesRes = await fetchWithRetry(`/api/klines?symbol=${encodeURIComponent(s)}&interval=${timeframe}&limit=500`);
+            const klinesRes = await fetchWithRetry(`/api/klines?symbol=${encodeURIComponent(s)}&interval=${timeframe}&limit=500`, {}, 3, 500, 30000);
             
             if (!klinesRes.ok) {
-              const errData = await klinesRes.json().catch(() => ({ error: `Status ${klinesRes.status}` }));
-              if (klinesRes.status === 404 || klinesRes.status === 400) {
+              if (klinesRes.status === 404 || klinesRes.status === 400 || klinesRes.status === 451) {
+                // If it's region restricted (451), we still log it but don't stop the scan
+                console.warn(`Scanner: [${s}] Skip due to status ${klinesRes.status}`);
                 return;
               }
-              console.warn(`Scanner: [${s}] ${klinesRes.status} - ${errData.error}`);
+              const errData = await klinesRes.json().catch(() => ({ error: `Status ${klinesRes.status}` }));
+              console.warn(`Scanner: [${s}] Error ${klinesRes.status}: ${errData.error}`);
               return;
             }
             

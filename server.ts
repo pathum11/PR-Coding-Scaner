@@ -739,8 +739,13 @@ async function startServer() {
         if (!response.ok) {
           const text = await response.text().catch(() => "Unknown body");
           if (response.status === 429) {
-            console.error(`Scanner: Rate limited by ${base}`);
+            console.error(`Scanner: Rate limited (429) by ${base}`);
             return res.status(429).json({ error: "Binance Rate Limit", details: text });
+          }
+          if (response.status === 451 || response.status === 403) {
+             console.error(`Scanner: Region Restricted (451/403) by ${base} for ${symbol}`);
+             lastError = "Binance region restriction (451/403). Server IP might be blocked.";
+             continue; // Try next endpoint
           }
           lastError = `Binance API error (${response.status}) from ${base}: ${text.substring(0, 100)}`;
           continue; 
